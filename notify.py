@@ -45,6 +45,21 @@ def build_rationale_message(suggestion: Suggestion, pnl_footer: str) -> str:
     return "\n\n".join(parts)[:4096]
 
 
+async def send_photo_with_caption(
+    bot: Bot,
+    chat_id: int | str,
+    chart_path: str,
+    caption: str,
+) -> None:
+    """Send a chart image with caption to a chat."""
+    path = Path(chart_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Chart not found: {chart_path}")
+
+    with open(path, "rb") as photo:
+        await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption[:1024])
+
+
 async def send_suggestion_to_chat(
     bot: Bot,
     chat_id: int | str,
@@ -63,6 +78,19 @@ async def send_suggestion_to_chat(
         await bot.send_photo(chat_id=chat_id, photo=photo, caption=caption)
     if rationale_message:
         await bot.send_message(chat_id=chat_id, text=rationale_message)
+
+
+async def send_research_to_chat(
+    bot: Bot,
+    chat_id: int | str,
+    chart_path: str,
+    caption: str,
+    detail_text: str,
+) -> None:
+    """Send research chart + follow-up detail message."""
+    await send_photo_with_caption(bot, chat_id, chart_path, caption)
+    if detail_text:
+        await bot.send_message(chat_id=chat_id, text=detail_text[:4096])
 
 
 async def broadcast_to_subscribers(

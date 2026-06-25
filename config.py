@@ -71,4 +71,5 @@ TELEGRAM_ADMIN_CHAT_ID: str | None = _optional("TELEGRAM_ADMIN_CHAT_ID")
 ROOT_DIR: Path = Path(__file__).resolve().parent
 CHARTS_DIR: Path = ROOT_DIR / "charts"
 LEDGER_DB: Path = ROOT_DIR / "ledger.db"
+OHLC_DB: Path = ROOT_DIR / "ohlc.db"
 TRADING_GUIDE_DIR: Path = ROOT_DIR / "Trading Guide"

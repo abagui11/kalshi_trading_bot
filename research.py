@@ -52,12 +52,14 @@ def _normalize_candle(raw: dict[str, str]) -> dict[str, float | str]:
     }
 
 
-def _fetch_coinbase_candles(granularity: str, limit: int) -> list[dict[str, float | str]]:
-    seconds = _GRANULARITY_SECONDS[granularity]
+def _fetch_coinbase_candles_page(
+    granularity: str,
+    start: int,
+    end: int,
+    limit: int,
+) -> list[dict[str, float | str]]:
+    """Fetch one page of candles for [start, end] (unix seconds)."""
     capped = min(limit, _MAX_CANDLES)
-    end = int(time.time())
-    start = end - capped * seconds
-
     url = f"{config.MARKET_DATA_API}/products/{PRODUCT_ID}/candles"
     params = {
         "start": str(start),
@@ -72,11 +74,57 @@ def _fetch_coinbase_candles(granularity: str, limit: int) -> list[dict[str, floa
 
     candles = payload.get("candles", [])
     if not candles:
-        raise RuntimeError(f"No candles returned for {PRODUCT_ID} {granularity}")
+        return []
 
     bars = [_normalize_candle(c) for c in candles]
     bars.sort(key=lambda b: b["ts"])
+    return bars
+
+
+def _fetch_coinbase_candles(granularity: str, limit: int) -> list[dict[str, float | str]]:
+    seconds = _GRANULARITY_SECONDS[granularity]
+    capped = min(limit, _MAX_CANDLES)
+    end = int(time.time())
+    start = end - capped * seconds
+
+    bars = _fetch_coinbase_candles_page(granularity, start, end, capped)
+    if not bars:
+        raise RuntimeError(f"No candles returned for {PRODUCT_ID} {granularity}")
     return bars[-capped:]
+
+
+def fetch_coinbase_candles_range(
+    granularity: str,
+    start_ts: int,
+    end_ts: int,
+) -> list[dict[str, float | str]]:
+    """Paginate Coinbase candles between unix start/end (inclusive window)."""
+    if start_ts >= end_ts:
+        raise ValueError("start_ts must be before end_ts")
+
+    seconds = _GRANULARITY_SECONDS[granularity]
+    window_seconds = _MAX_CANDLES * seconds
+    all_bars: dict[str, dict[str, float | str]] = {}
+    cursor = start_ts
+
+    while cursor < end_ts:
+        chunk_end = min(cursor + window_seconds, end_ts)
+        page = _fetch_coinbase_candles_page(
+            granularity, cursor, chunk_end, _MAX_CANDLES
+        )
+        if not page:
+            cursor = chunk_end
+            continue
+        for bar in page:
+            all_bars[str(bar["ts"])] = bar
+        last_dt = datetime.fromisoformat(str(page[-1]["ts"]).replace("Z", "+00:00"))
+        next_cursor = int(last_dt.timestamp()) + seconds
+        if next_cursor <= cursor:
+            cursor = chunk_end
+        else:
+            cursor = next_cursor
+
+    return sorted(all_bars.values(), key=lambda b: b["ts"])
 
 
 def _resample_weekly(daily_bars: list[dict[str, float | str]], limit: int) -> list[dict[str, float | str]]:

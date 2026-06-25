@@ -253,6 +253,107 @@ def annotate_chart(
   return str(annotated_path)
 
 
+def render_research_chart(
+  bars: list[dict],
+  events: list,
+  stats: dict,
+  timeframe: str = "W1",
+  cycle_id: str | None = None,
+  years: int = 4,
+) -> str:
+  """
+  Render a single-TF research chart with SFP markers and stats panel.
+  `events` should be patterns.sfp.SFPEvent instances.
+  """
+  from patterns.sfp import SFPEvent
+
+  out_dir = _ensure_charts_dir()
+  cycle_id = cycle_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+  path = out_dir / f"{cycle_id}_research_{timeframe}.png"
+
+  df = _to_mpf_df(bars)
+  if df.empty:
+    raise ValueError("No bars to render")
+
+  date_start = df.index[0].strftime("%Y-%m")
+  date_end = df.index[-1].strftime("%Y-%m")
+  title = f"ETH-USD {timeframe} — Weekly SFP Study ({years}y)"
+  fig, ax_price, ax_text = _build_annotated_figure(df, title)
+
+  outcome_colors = {
+    "reversal": "#00AA00",
+    "invalidation": "#CC0000",
+    "neutral": "#888888",
+    "pending": "#AAAAAA",
+  }
+
+  for event in events:
+    if not isinstance(event, SFPEvent):
+      continue
+    ts = pd.Timestamp(event.ts)
+    if ts.tzinfo is None:
+      ts = ts.tz_localize("UTC")
+    if ts not in df.index:
+      idx_pos = df.index.get_indexer([ts], method="nearest")[0]
+      ts = df.index[idx_pos]
+    x = mdates.date2num(ts)
+    color = outcome_colors.get(event.outcome_a, "#888888")
+    marker = "v" if event.direction == "bearish" else "^"
+    y = float(df.loc[ts, "High"]) if event.direction == "bearish" else float(df.loc[ts, "Low"])
+    offset = 1.02 if event.direction == "bearish" else 0.98
+    ax_price.scatter(
+      [x],
+      [y * offset],
+      marker=marker,
+      s=120,
+      c=color,
+      edgecolors="black",
+      linewidths=0.5,
+      zorder=5,
+    )
+    tick_len = (df.index[-1] - df.index[0]).days * 0.01
+    ax_price.hlines(
+      event.swept_level,
+      x - tick_len,
+      x + tick_len,
+      colors=color,
+      linewidth=1.2,
+      alpha=0.8,
+      zorder=4,
+    )
+
+  reversal_pct = stats.get("reversal_pct", 0)
+  total = stats.get("total_sfps", 0)
+  rev = stats.get("reversals", 0)
+  inv = stats.get("invalidations", 0)
+  neu = stats.get("neutral", 0)
+  pend = stats.get("pending", 0)
+  b_pct = stats.get("outcome_b_pct", 0)
+  c_pct = stats.get("outcome_c_pct", 0)
+
+  panel = (
+    f"Weekly SFP Results\n\n"
+    f"Period: {date_start} to {date_end}\n"
+    f"Coinbase ETH-USD (W-FRI)\n\n"
+    f"Headline (Outcome A):\n"
+    f"  {reversal_pct}% reversal\n"
+    f"  ({rev} rev / {inv} inv)\n"
+    f"  n={total} SFPs scored\n\n"
+    f"Also logged:\n"
+    f"  Neutral: {neu}\n"
+    f"  Pending: {pend}\n"
+    f"  Outcome B (>=5% move): {b_pct}%\n"
+    f"  Outcome C (structure break): {c_pct}%\n\n"
+    f"Green=reversal  Red=invalidation\n"
+    f"Gray=neutral/pending"
+  )
+  _draw_rationale_panel(ax_text, "Research", panel)
+
+  fig.savefig(path, dpi=DPI, bbox_inches="tight")
+  plt.close(fig)
+  return str(path)
+
+
 def _fake_suggestion(h1_bars: list[dict]) -> Suggestion:
   """Build a plausible fake long setup from recent H1 structure."""
   df = research.to_dataframe(h1_bars)
