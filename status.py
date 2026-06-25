@@ -25,7 +25,7 @@ def main() -> None:
 
     api_ok = len(config.ANTHROPIC_API_KEY) > 20 and "your" not in config.ANTHROPIC_API_KEY.lower()
     tg_ok = ":" in config.TELEGRAM_BOT_TOKEN and "test" not in config.TELEGRAM_BOT_TOKEN.lower()
-    allow_ok = len(config.ALLOWED_TELEGRAM_IDS) > 0
+    allow_ok = config.PAYWALL_ENABLED and len(config.ALLOWED_TELEGRAM_IDS) > 0 or not config.PAYWALL_ENABLED
 
     pattern_ok = all(
         (config.TRADING_GUIDE_DIR / name).exists()
@@ -36,8 +36,10 @@ def main() -> None:
     print(f"ANTHROPIC_MODEL:       {config.ANTHROPIC_MODEL}")
     print(f"Anthropic API key:     {'OK (set)' if api_ok else 'CHECK .env'}")
     print(f"Telegram bot token:    {'OK (set)' if tg_ok else 'CHECK .env'}")
-    print(f"Allowed subscribers:   {len(config.ALLOWED_TELEGRAM_IDS)} ids")
-    print(f"Allowlist configured:  {'OK' if allow_ok else 'MISSING ALLOWED_TELEGRAM_IDS'}")
+    print(f"Paywall enabled:       {config.PAYWALL_ENABLED}")
+    print(f"Allowed subscribers:   {len(config.ALLOWED_TELEGRAM_IDS)} ids (paywall only)")
+    print(f"DM recipients:         {len(access.broadcast_recipient_ids())}")
+    print(f"Allowlist configured:  {'OK' if allow_ok else 'SET ALLOWED_TELEGRAM_IDS or PAYWALL_ENABLED=false'}")
     print(f"PORTFOLIO_VALUE:       {config.PORTFOLIO_VALUE}")
     print(f"PAPER_PORTFOLIO_VALUE: {config.PAPER_PORTFOLIO_VALUE}")
     print(f"Pattern images:        {'OK' if pattern_ok else 'MISSING in Trading Guide/'}")

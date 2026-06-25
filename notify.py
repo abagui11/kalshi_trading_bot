@@ -8,6 +8,7 @@ from pathlib import Path
 
 from telegram import Bot
 
+import access
 import config
 import paper
 from models import Suggestion
@@ -70,23 +71,28 @@ async def broadcast_to_subscribers(
     chart_path: str,
     pnl_footer: str | None = None,
 ) -> None:
-    """DM the suggestion to every allowlisted Telegram user."""
+    """DM the suggestion to every registered subscriber (or allowlist if paywall on)."""
     footer = pnl_footer or paper.format_pnl_footer()
-    for user_id in config.ALLOWED_TELEGRAM_IDS:
+    recipients = access.broadcast_recipient_ids()
+    sent: set[int] = set()
+
+    for user_id in recipients:
+        if user_id in sent:
+            continue
         try:
             await send_suggestion_to_chat(bot, user_id, suggestion, chart_path, footer)
+            sent.add(user_id)
             logger.info("Sent suggestion to user %s", user_id)
         except Exception:
             logger.exception("Failed to send to user %s", user_id)
 
-    allowed = set(config.ALLOWED_TELEGRAM_IDS)
     admin_chat = config.TELEGRAM_ADMIN_CHAT_ID or config.TELEGRAM_CHAT_ID
     if admin_chat:
         try:
             admin_id = int(str(admin_chat).strip())
         except ValueError:
             admin_id = None
-        if admin_id is not None and admin_id not in allowed:
+        if admin_id is not None and admin_id not in sent:
             try:
                 await send_suggestion_to_chat(bot, admin_chat, suggestion, chart_path, footer)
                 logger.info("Sent suggestion to admin chat %s", admin_chat)

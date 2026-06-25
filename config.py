@@ -14,7 +14,6 @@ _REQUIRED_KEYS = (
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
     "TELEGRAM_BOT_TOKEN",
-    "ALLOWED_TELEGRAM_IDS",
     "MARKET_DATA_API",
     "PORTFOLIO_VALUE",
     "PAPER_PORTFOLIO_VALUE",
@@ -38,6 +37,13 @@ def _optional(key: str) -> str | None:
     return value.strip()
 
 
+def _optional_bool(key: str, default: bool = False) -> bool:
+    value = os.getenv(key)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in ("1", "true", "yes")
+
+
 ANTHROPIC_API_KEY: str = _require("ANTHROPIC_API_KEY")
 ANTHROPIC_MODEL: str = _require("ANTHROPIC_MODEL")
 TELEGRAM_BOT_TOKEN: str = _require("TELEGRAM_BOT_TOKEN")
@@ -45,12 +51,18 @@ MARKET_DATA_API: str = _require("MARKET_DATA_API").rstrip("/")
 PORTFOLIO_VALUE: float = float(_require("PORTFOLIO_VALUE"))
 PAPER_PORTFOLIO_VALUE: float = float(_require("PAPER_PORTFOLIO_VALUE"))
 
-# Comma-separated Telegram user IDs with access (manual paywall list).
+# Set PAYWALL_ENABLED=true to restrict chat + hourly DMs to ALLOWED_TELEGRAM_IDS only.
+PAYWALL_ENABLED: bool = _optional_bool("PAYWALL_ENABLED", default=False)
+
+# Comma-separated Telegram user IDs (required when PAYWALL_ENABLED=true).
+_allowed_raw = os.getenv("ALLOWED_TELEGRAM_IDS", "")
 ALLOWED_TELEGRAM_IDS: list[int] = [
-    int(x.strip())
-    for x in _require("ALLOWED_TELEGRAM_IDS").split(",")
-    if x.strip()
+    int(x.strip()) for x in _allowed_raw.split(",") if x.strip()
 ]
+if PAYWALL_ENABLED and not ALLOWED_TELEGRAM_IDS:
+    raise RuntimeError(
+        "PAYWALL_ENABLED=true requires ALLOWED_TELEGRAM_IDS in .env"
+    )
 
 # Optional legacy admin / monitoring channel.
 TELEGRAM_CHAT_ID: str | None = _optional("TELEGRAM_CHAT_ID")

@@ -37,11 +37,22 @@ def load_allowed_ids() -> set[int]:
 
 
 def is_allowed(user_id: int) -> bool:
+    if not config.PAYWALL_ENABLED:
+        return True
     return user_id in load_allowed_ids()
 
 
+def broadcast_recipient_ids() -> list[int]:
+    """Telegram user IDs that receive hourly trade DMs."""
+    if not config.PAYWALL_ENABLED:
+        ids = {row["telegram_id"] for row in list_subscribers()}
+        ids.update(load_allowed_ids())
+        return sorted(ids)
+    return sorted(load_allowed_ids())
+
+
 def register_user(user_id: int, username: str | None = None) -> None:
-    """Record a user who messaged the bot (for future billing)."""
+    """Record a user who messaged the bot."""
     init_db()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     active = 1 if is_allowed(user_id) else 0
@@ -71,12 +82,16 @@ def list_subscribers() -> list[dict]:
 
 
 def pending_subscribers() -> list[dict]:
-    """Users who messaged the bot but are not on ALLOWED_TELEGRAM_IDS yet."""
+    """Users who messaged the bot but are not on ALLOWED_TELEGRAM_IDS yet (paywall only)."""
+    if not config.PAYWALL_ENABLED:
+        return []
     allowed = load_allowed_ids()
     return [s for s in list_subscribers() if s["telegram_id"] not in allowed]
 
 
 def active_subscribers() -> list[dict]:
-    """Users on the allowlist (active=1 in DB after last /start)."""
+    """Users who receive hourly DMs."""
+    if not config.PAYWALL_ENABLED:
+        return list_subscribers()
     allowed = load_allowed_ids()
     return [s for s in list_subscribers() if s["telegram_id"] in allowed]

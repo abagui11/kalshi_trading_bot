@@ -23,7 +23,12 @@ def main() -> None:
     active = access.active_subscribers()
 
     print("=== ETH Trading Agent — Subscribers ===\n")
-    print(f"Allowlist (.env):  {','.join(str(i) for i in allowed_ids) or '(empty)'}")
+    if config.PAYWALL_ENABLED:
+        print(f"Paywall: ON — only ALLOWED_TELEGRAM_IDS receive DMs")
+        print(f"Allowlist: {','.join(str(i) for i in allowed_ids) or '(empty)'}")
+    else:
+        print("Paywall: OFF — anyone who /start's gets full access + hourly DMs")
+        print(f"Optional allowlist: {','.join(str(i) for i in allowed_ids) or '(none)'}")
     print(f"Registered total:  {len(all_subs)}")
     print(f"Active (allowed):  {len(active)}")
     print(f"Pending approval:  {len(pending)}\n")
