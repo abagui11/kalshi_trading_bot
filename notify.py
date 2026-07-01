@@ -18,6 +18,28 @@ logger = logging.getLogger(__name__)
 # TODO: inline approve/reject buttons + APPROVAL_WINDOW_MIN timeout (full build).
 
 
+def format_rationale_text(rationale: str) -> str:
+    """Normalize paragraph breaks for Telegram readability."""
+    text = rationale.strip()
+    if not text:
+        return ""
+    # Collapse runs of whitespace/newlines into paragraph breaks.
+    paragraphs = [p.strip() for p in text.replace("\r\n", "\n").split("\n\n") if p.strip()]
+    if len(paragraphs) == 1 and len(paragraphs[0]) > 400:
+        # Legacy wall-of-text: break before common section starters.
+        import re
+
+        single = paragraphs[0]
+        breaks = (
+            r"(?=\b(?:Multiple active|A H\d+|Price is currently|The 24h range|"
+            r"Setup state|Two pending|On H\d|Monday Low|No R/R|Waiting for)\b)"
+        )
+        parts = [p.strip() for p in re.split(breaks, single) if p.strip()]
+        if len(parts) > 1:
+            paragraphs = parts
+    return "\n\n".join(paragraphs)
+
+
 def build_caption(suggestion: Suggestion) -> str:
     """Short caption for the chart photo (Telegram limit: 1024 characters)."""
     if suggestion.action == "no_trade":
@@ -40,7 +62,8 @@ def build_rationale_message(suggestion: Suggestion, pnl_footer: str) -> str:
     parts: list[str] = []
     if suggestion.rationale.strip():
         header = "NO TRADE" if suggestion.action == "no_trade" else suggestion.action.upper()
-        parts.append(f"{header}\n\nRationale:\n{suggestion.rationale.strip()}")
+        formatted = format_rationale_text(suggestion.rationale)
+        parts.append(f"{header}\n\nRationale:\n{formatted}")
     parts.append(pnl_footer)
     return "\n\n".join(parts)[:4096]
 

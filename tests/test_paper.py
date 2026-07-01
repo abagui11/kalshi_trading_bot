@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import bot_config
 import config
 import paper
 from models import Suggestion
@@ -21,9 +22,12 @@ class PaperPositionTests(unittest.TestCase):
         self._config_patch.start()
         self._portfolio_patch = patch.object(config, "PAPER_PORTFOLIO_VALUE", 1000.0)
         self._portfolio_patch.start()
+        self._max_patch = patch.object(bot_config, "MAX_OPEN_TRADES", 4)
+        self._max_patch.start()
         paper.init_db()
 
     def tearDown(self) -> None:
+        self._max_patch.stop()
         self._portfolio_patch.stop()
         self._config_patch.stop()
         self._tmpdir.cleanup()
@@ -223,6 +227,85 @@ class PaperPositionTests(unittest.TestCase):
         self.assertIn("DERIV_SELL", detail)
         self.assertIn("$1,576.00", detail)
         self.assertIn("realized -$", detail)
+
+    def test_multiple_positions_stay_open(self) -> None:
+        short = Suggestion(
+            action="deriv_sell",
+            size=0.64,
+            entry=1576.0,
+            stop_loss=1592.0,
+            take_profits=[1545.0],
+            risk_reward=2.0,
+            rationale="short one",
+        )
+        long = Suggestion(
+            action="spot_buy",
+            size=0.32,
+            entry=1572.0,
+            stop_loss=1543.0,
+            take_profits=[1610.0],
+            risk_reward=2.27,
+            rationale="long two",
+        )
+        paper.update(short, spot_price=1576.0, cycle_id="cycle_short")
+        paper.update(long, spot_price=1572.0, cycle_id="cycle_long")
+        positions = paper.get_open_positions(1570.0)
+        self.assertEqual(len(positions), 2)
+        cycles = {p["open_cycle_id"] for p in positions}
+        self.assertEqual(cycles, {"cycle_short", "cycle_long"})
+
+    def test_sl_closes_position_without_new_trade(self) -> None:
+        paper.restore_open_position(
+            action="deriv_sell",
+            entry=1576.0,
+            eth_qty=0.625,
+            stop_loss=1592.0,
+            take_profits=[1545.0],
+            risk_reward=2.0,
+            suggested_size=0.64,
+            opened_at="2026-06-27T17:29:25Z",
+            open_cycle_id="cycle_short",
+            spot_price=1570.0,
+        )
+        paper.update(Suggestion.no_trade("No setup"), spot_price=1595.0, cycle_id="cycle_sl")
+        self.assertFalse(paper.is_open())
+        closed = paper.get_closed_trades(limit=1)
+        self.assertEqual(closed[0]["close_reason"], "stop_loss")
+
+    def test_fifo_closes_oldest_when_at_max(self) -> None:
+        with patch.object(bot_config, "MAX_OPEN_TRADES", 2):
+            for i in range(2):
+                paper.update(
+                    Suggestion(
+                        action="deriv_sell",
+                        size=0.5,
+                        entry=1576.0 + i,
+                        stop_loss=1600.0 + i,
+                        take_profits=[1500.0],
+                        risk_reward=2.0,
+                        rationale=f"short {i}",
+                    ),
+                    spot_price=1576.0,
+                    cycle_id=f"cycle_{i}",
+                )
+            paper.update(
+                Suggestion(
+                    action="spot_buy",
+                    size=0.3,
+                    entry=1570.0,
+                    stop_loss=1540.0,
+                    take_profits=[1620.0],
+                    risk_reward=2.0,
+                    rationale="third trade",
+                ),
+                spot_price=1570.0,
+                cycle_id="cycle_new",
+            )
+        positions = paper.get_open_positions(1570.0)
+        self.assertEqual(len(positions), 2)
+        cycles = {p["open_cycle_id"] for p in positions}
+        self.assertIn("cycle_new", cycles)
+        self.assertNotIn("cycle_0", cycles)
 
 
 if __name__ == "__main__":

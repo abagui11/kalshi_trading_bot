@@ -22,13 +22,14 @@ from models import Suggestion
 from patterns.htf_structure import HTFZone
 from patterns.key_levels import KeyLevel
 from patterns.market_context import MarketContext
+from patterns.order_block import fib_zone_bounds
 
-FIGSIZE = (16, 10)
-OUTPUT_FIGSIZE = (16, 10)
-ANNOTATED_FIGSIZE = (16, 8)
+FIGSIZE = (24, 10)
+OUTPUT_FIGSIZE = (24, 10)
+ANNOTATED_FIGSIZE = (24, 8)
 DPI = 144
 FONT_SIZE = 12
-RATIONALE_WRAP_WIDTH = 38
+RATIONALE_WRAP_WIDTH = 56
 # Telegram rejects extreme PNG dimensions; keep saved charts within these bounds.
 TELEGRAM_MAX_CHART_WIDTH = 4096
 TELEGRAM_MAX_CHART_HEIGHT = 4096
@@ -147,8 +148,8 @@ def _plan_key_level_labels(
   y_lo: float,
   y_hi: float,
   *,
-  min_gap_frac: float = 0.032,
-  max_nudge_frac: float = 0.05,
+  min_gap_frac: float = 0.028,
+  max_nudge_frac: float = 0.08,
 ) -> list[tuple[KeyLevel, float, str]]:
   """
   Assign label y-offsets and left/right sides so nearby levels do not overlap.
@@ -307,25 +308,6 @@ def _draw_htf_zones(ax, df: pd.DataFrame, zones: list[HTFZone]) -> None:
     )
 
 
-def _fib_zone_bounds(
-  direction: str,
-  low: float,
-  high: float,
-  fib_low: float = 0.618,
-  fib_high: float = 0.786,
-) -> tuple[float, float]:
-  span = high - low
-  if span <= 0:
-    return low, high
-  if direction == "bearish":
-    z0 = low + span * (1 - fib_high)
-    z1 = low + span * (1 - fib_low)
-  else:
-    z0 = low + span * fib_low
-    z1 = low + span * fib_high
-  return min(z0, z1), max(z0, z1)
-
-
 def _draw_fib_zone(
   ax,
   df: pd.DataFrame,
@@ -336,7 +318,7 @@ def _draw_fib_zone(
   end_ts: str | None = None,
 ) -> None:
   """Shade 0.618–0.786 entry slice inside an OB."""
-  z_low, z_high = _fib_zone_bounds(direction, low, high)
+  z_low, z_high = fib_zone_bounds(direction, low, high)  # type: ignore[arg-type]
   if start_ts and end_ts:
     x0, x1 = _bar_x_range(df, start_ts, end_ts)
   else:
@@ -614,6 +596,16 @@ def _draw_detected_overlays(
         zorder=1,
       )
       ax.add_patch(rect)
+      ax.text(
+        left,
+        float(ob.high),
+        " H1 OB",
+        color=edge,
+        fontsize=FONT_SIZE - 1,
+        fontweight="bold",
+        va="bottom",
+        clip_on=True,
+      )
     except (KeyError, ValueError, IndexError):
       continue
 

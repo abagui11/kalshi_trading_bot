@@ -1,0 +1,7 @@
+"""Bot runtime configuration (non-secret tunables)."""
+
+from __future__ import annotations
+
+# Maximum simultaneous open paper positions. When full, oldest position is
+# closed at market (FIFO) to make room for a new trade signal.
+MAX_OPEN_TRADES = 4

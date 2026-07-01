@@ -38,9 +38,11 @@ This is a high level framework for trading and can be used to trade on any timef
 
 3. Repeat Step 2 but on the **H1** (1 hour) chart.
    1. Entries are decided based on H1 chart
-   2. Enter 0.5 units at 0.618 mark of H1 OB.
-   3. Enter 0.5 units at 0.768 mark of H1 OB.
+   2. Enter 0.5 units at 0.618 mark of **H1 OB** (not the H12 OB box).
+   3. Enter 0.5 units at 0.768 mark of **H1 OB**.
       1. Can adjust based on strategy
+   4. **H12 vs H1 OB:** Green/pink boxes labeled **H12 OB** on charts are HTF structure only. The `order_block` JSON field must reference a candle on the **H1** chart. If an H1 OB overlaps an H12 OB in price, say so explicitly — never call an H12 box an "H1 OB".
+   5. If price is inside an H12 OB but **outside** the H1 OB fib 0.618–0.786 zone, default **`no_trade`** (wait for H1 fib retest). Exception: deliberate HTF key-level entry per deviations below.
 
 4. Identify TP (take profit) and SL (stop loss) and Calculate risk reward:
    1. Set SL 0.25% away from the closest HTF swing level (e.g., if long, SL would be a swing low)
@@ -118,8 +120,8 @@ When the H1 chart shows structure similar to this reference screenshot, the agen
 
 1. **Identify the 24h range** (example: 58.5–60.4 in the reference). State that the range exists in `rationale`, and flag again if price breaks above or below the range.
 2. **Identify ranging conditions** when price oscillates inside the 24h range without a clean trend.
-3. **Identify the potential order block** — use **H12 OB/BRKR boxes** on the marked charts when present; they are detected programmatically from H12 structure. You may also infer additional LTF OBs on H4/H1 using the same displacement rules when no box is drawn.
-4. **Alert a potential short inside the order block** when HTF/LTF structure aligns (e.g., bearish OB retest in the 0.618–0.786 zone with R/R ≥ 1.5).
+3. **Identify the potential order block** — use **H12 OB/BRKR boxes** on the marked charts when present; they are detected programmatically from H12 structure and cited for **HTF bias only**. For **entries**, use **H1 OBs** from programmatic context (`Detected H1 order blocks`) or infer on H1 using the same displacement rules.
+4. **Alert a potential short inside the H1 OB fib zone** when HTF/LTF structure aligns (e.g., bearish H1 OB retest in the 0.618–0.786 zone with R/R ≥ 1.5). Being inside an H12 OB alone is not sufficient for entry.
 
 **Deviations / Adjustments:**
 
@@ -187,11 +189,11 @@ Respond with **only** a JSON object — no markdown fences, no prose outside JSO
 {
   "action": "spot_buy",
   "size": 0.42,
-  "entry": 2400.0,
+  "entry": 2408.0,
   "stop_loss": 2350.0,
   "take_profits": [2500.0, 2600.0, 2700.0],
   "risk_reward": 2.0,
-  "rationale": "H12 bullish HH/HL, price holding above Weekly Open. Bearish H12 breaker retest at PWM. H1 fib 0.618–0.786 inside H1 OB.",
+  "rationale": "H12 bullish HH/HL for bias. H1 OB 2380-2420 fib 0.618-0.786 entry. Weekly Open confluence.",
   "decision_charts": ["H12", "H4", "H1"],
   "structure_chart": "H12",
   "entry_chart": "H1",
@@ -199,10 +201,12 @@ Respond with **only** a JSON object — no markdown fences, no prose outside JSO
     "low": 2380.0,
     "high": 2420.0,
     "start_ts": "2026-06-20T12:00:00Z",
-    "end_ts": "2026-06-23T08:00:00Z"
+    "end_ts": "2026-06-20T12:00:00Z"
   }
 }
 ```
+
+`order_block` must be an **H1 OB** (timestamps on the H1 chart). Entry must fall inside that block's **0.618–0.786 fib zone** (example entry 2408 is inside 2404.72–2411.44). Do not copy H12 OB bounds into `order_block`.
 
 **No trade:**
 ```json
@@ -213,15 +217,13 @@ Respond with **only** a JSON object — no markdown fences, no prose outside JSO
   "stop_loss": null,
   "take_profits": [],
   "risk_reward": null,
-  "rationale": "HTF bearish but H1 long setup — structure conflict at Prev Week Mid. R/R below 1.5.",
+  "rationale": "HTF bearish; price inside H12 bullish OB but no H1 OB fib entry — wait for retest.",
   "decision_charts": ["H12", "H1"],
   "structure_chart": null,
   "entry_chart": null,
   "order_block": null
 }
 ```
-
-`order_block` timestamps must be ISO-8601 UTC within the visible H1 chart.
 
 ## Charts provided each cycle
 
@@ -267,7 +269,16 @@ Structure is **detected on H12** closed candles, then **projected** onto H12, H4
 
 MSB uses **close only** — wick-only breaks through a swing level do not count.
 
-Use H12 OB/BRKR boxes for HTF bias. For LTF entries, zoom into H4/H1 and apply the same OB rules; LTF blocks may not have a drawn rectangle unless they coincide with a projected H12 zone.
+Use H12 OB/BRKR boxes for HTF bias. For LTF entries, use **H1 OBs** (labeled **H1 OB** on marked H1 charts when detected). LTF blocks may not overlap an H12 zone — if they do, state the overlap in rationale.
+
+### H1 order blocks (entries)
+
+| Visual | Meaning |
+|--------|---------|
+| Green/pink rectangle, label **H1 OB** | H1 order block detected programmatically — use for `order_block` JSON and fib entries |
+| No H1 OB label | No programmatic H1 OB in lookback — infer carefully or `no_trade` |
+
+Entry fib sweet spot (bullish): `low + span×0.618` to `low + span×0.786`. Programmatic context lists exact levels.
 
 ### Other reference lines
 
@@ -290,5 +301,14 @@ Up to two full-width charts per cycle when a trade is taken:
 Rationale and action details belong in the JSON `rationale` field only — subscribers receive them as a Telegram text message below the chart photos.
 
 Cite visible levels and H12 OB/BRKR zones in `rationale`.
+
+### Rationale structure
+
+Write `rationale` as **short paragraphs** separated by a blank line (`\n\n`). Do not write one long wall of text.
+
+1. **HTF structure** — trend, swings, and key higher-timeframe levels
+2. **Supply/demand** — active **H12** OB/BRKR zones (mitigated vs unmitigated); cite for bias only
+3. **LTF context** — **H1 OB** (with fib zone), 24h range, setup state, pending or confirmed SFPs
+4. **Decision** — why this trade or `no_trade`, and what would change the call
 
 Form **one** trade idea (or `no_trade`) for this hour.

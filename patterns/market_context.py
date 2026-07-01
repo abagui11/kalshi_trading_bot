@@ -7,7 +7,14 @@ from datetime import datetime, timedelta, timezone
 
 from patterns.htf_structure import HTFZone, detect_htf_zones
 from patterns.key_levels import KeyLevel, compute_key_levels, nearest_levels
-from patterns.order_block import OrderBlock, find_order_blocks, price_in_ob
+from patterns.order_block import (
+    OrderBlock,
+    fib_zone_bounds,
+    find_order_blocks,
+    format_ob_with_fib,
+    price_in_ob,
+    zones_overlap,
+)
 from patterns.range_24h import Range24h, compute_range_24h, detect_range_break
 from patterns.setup_state import SetupState, update_bearish_retest_state
 from patterns.sfp import SFPEvent, detect_sfps
@@ -113,11 +120,20 @@ def _htf_bearish_bias(h12_bars: list[dict], zone_snap: ZoneSnapshot) -> bool:
     )
 
 
-def _format_ob(ob: OrderBlock) -> str:
-    return (
-        f"{ob.direction} OB {ob.low:,.2f}-{ob.high:,.2f} "
-        f"(displacement {ob.displacement_ts[:16]})"
-    )
+def _format_h12_zone_fib(zone: HTFZone) -> str:
+    z_low, z_high = fib_zone_bounds(zone.direction, zone.low, zone.high)
+    return f"fib 0.618-0.786 inside zone: {z_low:,.2f}-{z_high:,.2f}"
+
+
+def _h1_ob_overlaps_h12(ob: OrderBlock, htf_zones: list[HTFZone]) -> HTFZone | None:
+    for zone in htf_zones:
+        if zone.mitigated or zone.zone_type != "order_block":
+            continue
+        if zone.direction != ob.direction:
+            continue
+        if zones_overlap(ob.low, ob.high, zone.low, zone.high):
+            return zone
+    return None
 
 
 def _format_sfp(event: SFPEvent) -> str:
@@ -259,13 +275,28 @@ def build_market_context(
 
     order_blocks = find_order_blocks(h1_bars)
     for ob in order_blocks:
-        if price_in_ob(spot, ob):
+        z_low, z_high = fib_zone_bounds(ob.direction, ob.low, ob.high)
+        in_full_ob = ob.low <= spot <= ob.high
+        in_fib = price_in_ob(spot, ob)
+        h12_match = _h1_ob_overlaps_h12(ob, htf_zones)
+        if in_fib:
             side = "short" if ob.direction == "bearish" else "long"
+            overlap = (
+                f" (overlaps H12 OB {h12_match.low:,.2f}-{h12_match.high:,.2f})"
+                if h12_match
+                else ""
+            )
+            alerts.append(
+                f"Price in {ob.direction} H1 OB fib zone {z_low:,.2f}-{z_high:,.2f}"
+                f"{overlap} — potential {side} setup"
+            )
+            setup_tags.append(f"h1_ob_{ob.direction}_in_fib")
+        elif in_full_ob:
             alerts.append(
                 f"Price inside {ob.direction} H1 OB ({ob.low:,.2f}-{ob.high:,.2f}) "
-                f"- potential {side} setup"
+                f"but BELOW fib sweet spot ({z_low:,.2f}-{z_high:,.2f}) — wait for fib retest"
             )
-            setup_tags.append(f"h1_ob_{ob.direction}_in_zone")
+            setup_tags.append(f"h1_ob_{ob.direction}_no_fib")
 
     key_levels_near: list[KeyLevel] = []
     if daily_bars:
@@ -323,9 +354,45 @@ def build_market_context(
         )
 
     if zone_snap.zones_containing_price:
-        lines.append("Canonical H12 zones at price:")
+        lines.append("Canonical H12 zones at price (structure/bias — NOT the H1 entry OB):")
         for z in zone_snap.zones_containing_price:
-            lines.append(f"  - {format_zone(z)}")
+            lines.append(f"  - {format_zone(z)} | {_format_h12_zone_fib(z)}")
+
+    if order_blocks:
+        lines.append("Detected H1 order blocks (use these for order_block JSON + entries):")
+        for ob in order_blocks[-5:]:
+            overlap = _h1_ob_overlaps_h12(ob, htf_zones)
+            overlap_note = (
+                f" | overlaps H12 OB {overlap.low:,.2f}-{overlap.high:,.2f}"
+                if overlap
+                else " | no H12 OB overlap"
+            )
+            in_fib = "spot IN fib" if price_in_ob(spot, ob) else "spot outside fib"
+            lines.append(f"  - {format_ob_with_fib(ob)}{overlap_note} | {in_fib}")
+    else:
+        lines.append("Detected H1 order blocks: none in lookback window")
+
+    bullish_at_spot = [ob for ob in order_blocks if ob.direction == "bullish" and ob.low <= spot <= ob.high]
+    bearish_at_spot = [ob for ob in order_blocks if ob.direction == "bearish" and ob.low <= spot <= ob.high]
+    if zone_snap.primary_bullish and not any(price_in_ob(spot, ob) for ob in bullish_at_spot):
+        z_low, z_high = fib_zone_bounds(
+            "bullish", zone_snap.primary_bullish.low, zone_snap.primary_bullish.high
+        )
+        if spot < z_low:
+            lines.append(
+                f"CAUTION: spot inside H12 bullish OB but below H12 fib sweet spot "
+                f"({z_low:,.2f}-{z_high:,.2f}) — do NOT call this a fib entry; "
+                f"cite H12 OB for bias only unless a separate H1 OB fib entry exists"
+            )
+    if zone_snap.primary_bearish and not any(price_in_ob(spot, ob) for ob in bearish_at_spot):
+        z_low, z_high = fib_zone_bounds(
+            "bearish", zone_snap.primary_bearish.low, zone_snap.primary_bearish.high
+        )
+        if spot > z_high:
+            lines.append(
+                f"CAUTION: spot inside H12 bearish OB but above H12 fib sweet spot "
+                f"({z_low:,.2f}-{z_high:,.2f}) — cite H12 OB for bias only"
+            )
 
     if zone_snap.bearish_retest_low is not None:
         lines.append(
@@ -375,6 +442,11 @@ def build_market_context(
         [
             "",
             "Decision rules:",
+            "- H12 OB/BRKR boxes = HTF structure and bias in rationale. Never label them 'H1 OB'.",
+            "- order_block JSON + entries = H1 OB only (from 'Detected H1 order blocks' above).",
+            "- Entry must be inside the H1 OB fib 0.618-0.786 zone unless action is no_trade.",
+            "- If H1 OB overlaps an H12 OB, say 'H1 OB coincides with H12 OB' — do not conflate.",
+            "- If only inside H12 OB (no H1 OB fib), default no_trade or wait for H1 fib retest.",
             "- If RETEST STATUS is FILLED, do NOT say price has not reached the retest zone.",
             "- If setup state is bearish_retest_rejected or short_trigger_retest, strongly favor SHORT.",
             "- If HTF zone conflict, default no_trade unless LTF+HTF align clearly.",

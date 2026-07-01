@@ -135,7 +135,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif latest:
         lines.append(f"Latest: {latest['action']} @ cycle {latest['cycle_id']}")
         if latest.get("rationale"):
-            rationale = str(latest["rationale"]).strip()
+            rationale = notify.format_rationale_text(str(latest["rationale"]))
             max_len = 500
             if len(rationale) > max_len:
                 rationale = rationale[:max_len].rstrip() + "..."
@@ -195,11 +195,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if position_detail:
         lines = [position_detail]
         if latest:
-            open_pos = paper.get_open_position(spot)
-            open_cid = open_pos.get("open_cycle_id") if open_pos else None
+            open_positions = paper.get_open_positions(spot)
+            open_cids = {
+                str(p["open_cycle_id"])
+                for p in open_positions
+                if p.get("open_cycle_id")
+            }
             header = "Latest hourly cycle"
-            if open_cid and latest.get("cycle_id") != open_cid:
-                header += " (may differ from open position)"
+            if open_cids and latest.get("cycle_id") not in open_cids:
+                header += " (may differ from open positions)"
             tps = ", ".join(f"{tp:,.2f}" for tp in latest.get("take_profits", [])) or "n/a"
             lines.extend(
                 [
@@ -211,7 +215,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                     f"R/R: {latest.get('risk_reward')}",
                 ]
             )
-            rationale = str(latest.get("rationale", "")).strip()
+            rationale = notify.format_rationale_text(str(latest.get("rationale", "")))
             if rationale:
                 max_len = 600
                 if len(rationale) > max_len:
@@ -241,7 +245,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"SL: {latest.get('stop_loss')}\n"
         f"TP: {tps}\n"
         f"R/R: {latest.get('risk_reward')}\n\n"
-        f"Rationale:\n{latest.get('rationale', '')}\n"
+        f"Rationale:\n{notify.format_rationale_text(str(latest.get('rationale', '')))}\n"
     )
     closed_detail = paper.format_closed_trades_detail()
     if closed_detail:

@@ -27,7 +27,7 @@ def test_validate_trade_requires_structure_and_entry_chart():
     data = {
         "action": "spot_buy",
         "size": 0.5,
-        "entry": 2400.0,
+        "entry": 2408.0,
         "stop_loss": 2350.0,
         "take_profits": [2500.0],
         "risk_reward": 2.0,
@@ -39,7 +39,7 @@ def test_validate_trade_requires_structure_and_entry_chart():
             "low": 2380.0,
             "high": 2420.0,
             "start_ts": "2026-06-20T12:00:00Z",
-            "end_ts": "2026-06-23T08:00:00Z",
+            "end_ts": "2026-06-20T12:00:00Z",
         },
     }
     s = _validate(data)
@@ -51,7 +51,7 @@ def test_validate_trade_defaults_missing_entry_chart_to_h1():
     data = {
         "action": "spot_buy",
         "size": 0.5,
-        "entry": 2400.0,
+        "entry": 2408.0,
         "stop_loss": 2350.0,
         "take_profits": [2500.0],
         "risk_reward": 2.0,
@@ -61,7 +61,7 @@ def test_validate_trade_defaults_missing_entry_chart_to_h1():
             "low": 2380.0,
             "high": 2420.0,
             "start_ts": "2026-06-20T12:00:00Z",
-            "end_ts": "2026-06-23T08:00:00Z",
+            "end_ts": "2026-06-20T12:00:00Z",
         },
     }
     s = _validate(data)

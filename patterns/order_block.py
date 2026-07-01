@@ -112,13 +112,124 @@ def find_order_blocks(bars: list[dict], lookback: int = 60) -> list[OrderBlock]:
     return unique[-5:]
 
 
+def fib_zone_bounds(
+    direction: Direction,
+    low: float,
+    high: float,
+    fib_low: float = 0.618,
+    fib_high: float = 0.786,
+) -> tuple[float, float]:
+    """0.618–0.786 entry sweet spot inside an OB (bullish: from bottom; bearish: from top)."""
+    span = high - low
+    if span <= 0:
+        return low, high
+    if direction == "bearish":
+        z0 = low + span * (1 - fib_high)
+        z1 = low + span * (1 - fib_low)
+    else:
+        z0 = low + span * fib_low
+        z1 = low + span * fib_high
+    return round(min(z0, z1), 2), round(max(z0, z1), 2)
+
+
+def fib_level(direction: Direction, low: float, high: float, fib: float) -> float:
+    """Single fib mark inside an OB (e.g. 0.618 entry level for bullish demand)."""
+    span = high - low
+    if span <= 0:
+        return low
+    if direction == "bearish":
+        return round(low + span * (1 - fib), 2)
+    return round(low + span * fib, 2)
+
+
+def price_in_fib_zone(
+    price: float,
+    direction: Direction,
+    low: float,
+    high: float,
+    fib_low: float = 0.618,
+    fib_high: float = 0.786,
+    tolerance_pct: float = 0.003,
+) -> bool:
+    """True when price is inside the fib sweet spot (with small tolerance for rounding)."""
+    zone_low, zone_high = fib_zone_bounds(direction, low, high, fib_low, fib_high)
+    pad = max(zone_high - zone_low, low * tolerance_pct, 1.0) * tolerance_pct
+    return (zone_low - pad) <= price <= (zone_high + pad)
+
+
 def price_in_ob(price: float, ob: OrderBlock, fib_low: float = 0.618, fib_high: float = 0.786) -> bool:
     """True when price sits in the OB discount/premium zone (fib slice of the block)."""
-    span = ob.high - ob.low
-    if span <= 0:
+    return price_in_fib_zone(price, ob.direction, ob.low, ob.high, fib_low, fib_high)
+
+
+def zones_overlap(
+    low_a: float,
+    high_a: float,
+    low_b: float,
+    high_b: float,
+    min_overlap_ratio: float = 0.5,
+) -> bool:
+    """True when two price zones share enough horizontal overlap."""
+    span_a = high_a - low_a
+    span_b = high_b - low_b
+    if span_a <= 0 or span_b <= 0:
         return False
-    zone_low = ob.low + span * (1 - fib_high) if ob.direction == "bearish" else ob.low + span * fib_low
-    zone_high = ob.low + span * (1 - fib_low) if ob.direction == "bearish" else ob.low + span * fib_high
-    if zone_low > zone_high:
-        zone_low, zone_high = zone_high, zone_low
-    return zone_low <= price <= zone_high
+    overlap = max(0.0, min(high_a, high_b) - max(low_a, low_b))
+    ref = min(span_a, span_b)
+    return overlap / ref >= min_overlap_ratio
+
+
+def bounds_close(
+    low_a: float,
+    high_a: float,
+    low_b: float,
+    high_b: float,
+    tol_pct: float = 0.01,
+) -> bool:
+    """True when two OB bounds are effectively the same zone."""
+    ref = max(high_b - low_b, 1.0)
+    return abs(low_a - low_b) <= ref * tol_pct and abs(high_a - high_b) <= ref * tol_pct
+
+
+def order_block_dict_matches(
+    ob_dict: dict,
+    candidate: OrderBlock,
+    *,
+    min_overlap_ratio: float = 0.5,
+) -> bool:
+    """True when JSON order_block aligns with a detected H1 OrderBlock."""
+    del min_overlap_ratio
+    try:
+        low = float(ob_dict["low"])
+        high = float(ob_dict["high"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if ob_dict.get("start_ts") and ob_dict["start_ts"] == candidate.start_ts:
+        return True
+    return bounds_close(low, high, candidate.low, candidate.high)
+
+
+def find_matching_h1_ob(
+    ob_dict: dict,
+    order_blocks: list[OrderBlock],
+    direction: Direction,
+) -> OrderBlock | None:
+    """Best matching detected H1 OB for a trade's order_block field."""
+    matches = [
+        ob
+        for ob in order_blocks
+        if ob.direction == direction and order_block_dict_matches(ob_dict, ob)
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda ob: ob.displacement_ts)
+
+
+def format_ob_with_fib(ob: OrderBlock) -> str:
+    """Single-line summary with fib sweet spot for prompts."""
+    z_low, z_high = fib_zone_bounds(ob.direction, ob.low, ob.high)
+    return (
+        f"{ob.direction} H1 OB {ob.low:,.2f}-{ob.high:,.2f} "
+        f"(candle {ob.start_ts[:16]}, displacement {ob.displacement_ts[:16]}) "
+        f"| fib 0.618-0.786: {z_low:,.2f}-{z_high:,.2f}"
+    )

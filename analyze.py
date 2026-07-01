@@ -14,6 +14,12 @@ import anthropic
 import config
 from models import Suggestion
 from patterns.market_context import MarketContext
+from patterns.order_block import (
+    bounds_close,
+    fib_zone_bounds,
+    find_matching_h1_ob,
+    price_in_fib_zone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,16 @@ Detected once on **H12** closed candles, then **projected** onto H12, H4, and H1
 
 MSB uses **close only** — wick-only breaks through a swing do not count.
 
+### H1 order blocks (LTF — entries only)
+Detected separately on **H1** candles (may appear as unlabeled green/pink rectangles on the H1 chart). These are **not** the same as H12 OB boxes unless price zones genuinely overlap.
+
+| Rule | Detail |
+|------|--------|
+| **order_block JSON** | Must be an **H1 OB** (candle timestamps on the H1 chart). Never copy H12 OB bounds into order_block. |
+| **Entry** | Must sit inside the H1 OB **fib 0.618–0.786** sweet spot (see programmatic context for computed levels). |
+| **Rationale** | Cite **H12 OB/BRKR** for HTF bias; cite **H1 OB** only for entry justification. If zones overlap, say "H1 OB coincides with H12 OB". |
+| **No H1 fib** | If price is only inside an H12 OB (not H1 fib), return **no_trade** or wait for H1 retest. |
+
 ### Other overlays
 - **Gray dashed lines**: recent swing high and swing low on that chart's timeframe (reference only).
 - Programmatic context text may list nearest levels and H12 zones — **always verify on the chart image**.
@@ -109,7 +125,10 @@ def _build_user_content(
             "text": (
                 "Analyze live ETH-USD marked charts and apply the Trading Guide strategy. "
                 "Compare live structure to all reference pattern images below. "
-                "Cite visible key levels and H12 OB/BRKR boxes in your rationale. "
+                "Cite H12 OB/BRKR for HTF bias and H1 OB (with fib zone) for entries — "
+                "never label an H12 box as 'H1 OB'. "
+                "Structure rationale as short paragraphs (HTF structure, H12 supply/demand, "
+                "LTF/H1 OB context, trade decision) separated by blank lines. "
                 "Return one JSON trade suggestion. JSON only."
             ),
         },
@@ -202,7 +221,81 @@ def _validate_chart_fields(suggestion: Suggestion) -> None:
         suggestion.decision_charts = [c for c in suggestion.decision_charts if c in valid]
 
 
-def _validate(data: dict) -> Suggestion:
+def _trade_direction(action: str) -> str:
+    if action in ("spot_buy", "deriv_buy"):
+        return "bullish"
+    if action in ("spot_sell", "deriv_sell"):
+        return "bearish"
+    raise ValueError(f"Cannot infer OB direction for action: {action}")
+
+
+def _validate_order_block_entry(
+    suggestion: Suggestion,
+    market_context: MarketContext | None,
+) -> None:
+    """Ensure order_block is a real H1 OB and entry sits in the fib sweet spot."""
+    ob = suggestion.order_block
+    assert ob is not None
+    low = float(ob["low"])
+    high = float(ob["high"])
+    if low >= high:
+        raise ValueError(f"order_block low ({low}) must be below high ({high})")
+
+    direction = _trade_direction(suggestion.action)
+    entry = float(suggestion.entry)  # type: ignore[arg-type]
+    z_low, z_high = fib_zone_bounds(direction, low, high)
+
+    if not price_in_fib_zone(entry, direction, low, high):
+        raise ValueError(
+            f"entry {entry:,.2f} outside H1 OB fib 0.618-0.786 zone "
+            f"({z_low:,.2f}-{z_high:,.2f}) for order_block {low:,.2f}-{high:,.2f}"
+        )
+
+    if market_context is None:
+        return
+
+    h1_obs = market_context.order_blocks
+    if not h1_obs:
+        return
+
+    match = find_matching_h1_ob(ob, h1_obs, direction)  # type: ignore[arg-type]
+    if match is not None:
+        return
+
+    htf_obs = [
+        z
+        for z in market_context.htf_zones
+        if z.zone_type == "order_block" and not z.mitigated
+    ]
+    h12_by_ts = next(
+        (
+            z
+            for z in htf_obs
+            if z.direction == direction and ob.get("start_ts") == z.start_ts
+        ),
+        None,
+    )
+    h12_by_bounds = next(
+        (
+            z
+            for z in htf_obs
+            if z.direction == direction and bounds_close(low, high, z.low, z.high)
+        ),
+        None,
+    )
+    h12_overlap = h12_by_ts or h12_by_bounds
+    if h12_overlap is not None:
+        raise ValueError(
+            f"order_block {low:,.2f}-{high:,.2f} matches H12 OB "
+            f"({h12_overlap.low:,.2f}-{h12_overlap.high:,.2f}) but not any detected H1 OB — "
+            "use H1 OB bounds in order_block JSON or return no_trade"
+        )
+    raise ValueError(
+        "order_block does not match any detected H1 OB — verify on H1 chart or return no_trade"
+    )
+
+
+def _validate(data: dict, market_context: MarketContext | None = None) -> Suggestion:
     action = str(data.get("action", "no_trade"))
     if action not in VALID_ACTIONS:
         raise ValueError(f"Invalid action: {action}")
@@ -231,6 +324,8 @@ def _validate(data: dict) -> Suggestion:
     for key in ("low", "high", "start_ts", "end_ts"):
         if key not in ob:
             raise ValueError(f"order_block missing {key}")
+
+    _validate_order_block_entry(suggestion, market_context)
 
     return suggestion
 
@@ -273,7 +368,7 @@ def propose_trade(
 
     try:
         data = _extract_json(raw_text)
-        return _validate(data)
+        return _validate(data, market_context=market_context)
     except (json.JSONDecodeError, ValueError, KeyError, TypeError) as exc:
         logger.warning("Malformed suggestion: %s | raw=%s", exc, raw_text[:500])
         return Suggestion.no_trade(f"parse_error: {exc}")

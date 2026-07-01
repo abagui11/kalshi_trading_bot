@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import anthropic
 
 import analyze
+import bot_config
 import config
 import ledger
 import paper
@@ -15,22 +17,28 @@ import research
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_SUFFIX = """
+_HISTORY_CYCLES = 36
+
+_SYSTEM_SUFFIX = f"""
 You are the ETH trading agent assistant. Answer only about:
 - The agent's ICT swing strategy and Trading Guide
-- The current open paper position (including SL, TP, entry, size, unrealized P&L, exit plan)
+- Open paper positions (up to {bot_config.MAX_OPEN_TRADES} at once), including SL, TP, entry, size, unrealized P&L, exit plan
 - Closed paper trades and realized P&L from the context provided
 - The current or latest hourly trade suggestion
+- Hourly trade update history in the ledger (timestamps, cycle IDs, rationales, chart paths)
 - Paper portfolio performance shown in the PnL line
 
-When a position is open, always reference its stop loss, take profit levels, and exit plan
-from the open position block — do not say SL/TP are missing if they appear there.
+When positions are open, always reference their stop loss, take profit levels, and exit plan
+from the open positions block — do not say SL/TP are missing if they appear there.
+
+If the context includes trade update history or search matches, use those to answer questions
+like "which update said X" or "what did we say about Y" — cite the cycle_id and timestamp.
 
 If the context includes closed paper trades, use those for questions about past trades,
 realized P&L, or closed positions (e.g. deriv_sell). Do not say history is unavailable
 if closed trades appear in the context.
 
-If the context includes a "Latest hourly cycle" section that differs from the open position,
+If the context includes a "Latest hourly cycle" section that differs from open positions,
 explain both: what is live in paper vs what the most recent hourly analysis recommended.
 
 Be concise and practical. For historical pattern research (e.g. weekly or H12 SFP stats over past years),
@@ -55,10 +63,10 @@ def _format_suggestion_context(row: dict) -> str:
     )
 
 
-def _format_latest_cycle_summary(latest: dict, open_cycle_id: str | None) -> str:
+def _format_latest_cycle_summary(latest: dict, open_cycle_ids: set[str]) -> str:
     header = "=== Latest hourly cycle"
-    if open_cycle_id and latest.get("cycle_id") != open_cycle_id:
-        header += " (may differ from open position)"
+    if open_cycle_ids and latest.get("cycle_id") not in open_cycle_ids:
+        header += " (may differ from open positions)"
     return f"{header} ===\n{_format_suggestion_context(latest)}"
 
 
@@ -74,32 +82,62 @@ def _pick_chart_path(*candidates: str | None) -> str | None:
     return None
 
 
-def _build_context(spot: float) -> tuple[str, str | None]:
+def _search_terms_from_message(message: str) -> list[str]:
+    """Extract meaningful phrases for ledger rationale search."""
+    cleaned = re.sub(r"[^\w\s$.,%-]", " ", message)
+    words = [w for w in cleaned.split() if len(w) >= 3]
+    if not words:
+        return []
+    terms: list[str] = []
+    if len(words) >= 3:
+        terms.append(" ".join(words[:6]))
+    for w in words:
+        if w.lower() not in {
+            "what", "when", "which", "where", "that", "this", "said", "trade",
+            "update", "about", "from", "have", "were", "was", "the", "and",
+        }:
+            terms.append(w)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in terms:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return unique[:4]
+
+
+def _build_context(spot: float, user_message: str) -> tuple[str, str | None]:
     """Return (text context, optional chart path for vision)."""
     parts: list[str] = [f"Current ETH spot: ${spot:,.2f}"]
 
-    position_detail = paper.format_position_detail(spot)
+    position_detail = paper.format_positions_detail(spot)
     chart_path: str | None = None
-    open_pos = paper.get_open_position(spot)
-    open_cycle_id = str(open_pos["open_cycle_id"]) if open_pos and open_pos.get("open_cycle_id") else None
+    open_positions = paper.get_open_positions(spot)
+    open_cycle_ids = {
+        str(p["open_cycle_id"]) for p in open_positions if p.get("open_cycle_id")
+    }
     latest = ledger.get_latest_suggestion()
 
     if position_detail:
         parts.append("")
-        parts.append("=== Open paper position ===")
+        parts.append("=== Open paper positions ===")
         parts.append(position_detail)
 
-        if open_cycle_id:
-            trade_row = ledger.get_suggestion_by_cycle_id(open_cycle_id)
+        for pos in open_positions:
+            cid = pos.get("open_cycle_id")
+            if not cid:
+                continue
+            trade_row = ledger.get_suggestion_by_cycle_id(str(cid))
             if trade_row:
                 parts.append("")
-                parts.append("Open position rationale:")
+                parts.append(f"Rationale for open position (cycle {cid}):")
                 parts.append(str(trade_row.get("rationale", "")).strip())
-                chart_path = _pick_chart_path(trade_row.get("chart_path"))
+                chart_path = _pick_chart_path(trade_row.get("chart_path"), chart_path)
 
         if latest:
             parts.append("")
-            parts.append(_format_latest_cycle_summary(latest, open_cycle_id))
+            parts.append(_format_latest_cycle_summary(latest, open_cycle_ids))
             chart_path = _pick_chart_path(latest.get("chart_path"), chart_path)
     elif latest:
         parts.append("")
@@ -111,6 +149,29 @@ def _build_context(spot: float) -> tuple[str, str | None]:
             parts.append("")
             parts.append(_format_suggestion_context(trade))
             chart_path = _pick_chart_path(trade.get("chart_path"))
+
+    history = ledger.get_latest(_HISTORY_CYCLES)
+    if history:
+        parts.append("")
+        parts.append("=== Trade update history (ledger) ===")
+        parts.append(ledger.format_history_summary(history))
+
+    search_hits: list[dict] = []
+    for term in _search_terms_from_message(user_message):
+        search_hits.extend(ledger.search_rationale(term, limit=3))
+    if search_hits:
+        seen_ids: set[int] = set()
+        deduped: list[dict] = []
+        for row in search_hits:
+            rid = int(row["id"])
+            if rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            deduped.append(row)
+        if deduped:
+            parts.append("")
+            parts.append("=== Ledger search matches (for user question) ===")
+            parts.append(ledger.format_history_summary(deduped[:8], max_rationale_chars=400))
 
     closed_detail = paper.format_closed_trades_detail()
     if closed_detail:
@@ -133,7 +194,7 @@ def answer(user_message: str) -> str:
             "No trade suggestions yet. The agent runs every hour — check back after the first cycle."
         )
 
-    text_context, chart_path = _build_context(spot)
+    text_context, chart_path = _build_context(spot, user_message)
     text_context = f"{text_context}\n\nUser question: {user_message}"
 
     vision_blocks = analyze.build_vision_content(

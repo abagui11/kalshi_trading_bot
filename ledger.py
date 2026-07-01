@@ -161,6 +161,49 @@ def get_latest(n: int = 10) -> list[dict]:
     return results
 
 
+def search_rationale(query: str, limit: int = 5) -> list[dict]:
+    """Find suggestions whose rationale contains query (case-insensitive)."""
+    query = query.strip()
+    if not query:
+        return []
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM suggestions
+            WHERE rationale LIKE ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (f"%{query}%", limit),
+        ).fetchall()
+    results = []
+    for row in rows:
+        record = dict(row)
+        record["take_profits"] = json.loads(record["take_profits"] or "[]")
+        results.append(record)
+    return results
+
+
+def format_history_summary(rows: list[dict], *, max_rationale_chars: int = 220) -> str:
+    """Compact multi-cycle summary for chat context."""
+    if not rows:
+        return ""
+    lines = ["Hourly trade update history (newest first):"]
+    for row in rows:
+        action = str(row.get("action") or "n/a")
+        ts = row.get("ts") or ""
+        cycle_id = row.get("cycle_id") or ""
+        rationale = str(row.get("rationale") or "").strip().replace("\n", " ")
+        if len(rationale) > max_rationale_chars:
+            rationale = rationale[:max_rationale_chars].rstrip() + "..."
+        chart = row.get("chart_path") or "n/a"
+        lines.append(
+            f"- {ts} | cycle {cycle_id} | {action} | charts: {chart}\n  rationale: {rationale}"
+        )
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     fake = Suggestion(
         action="spot_buy",
