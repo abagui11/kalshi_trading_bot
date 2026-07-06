@@ -188,8 +188,11 @@ def build_vision_content(
 
     if include_live_charts and chart_paths:
         for tf in CHART_ORDER:
+            path = chart_paths.get(tf)
+            if not path:
+                continue
             content.append({"type": "text", "text": f"--- Live {tf} chart ---"})
-            content.append(_image_block(chart_paths[tf]))
+            content.append(_image_block(path))
 
     if annotated_h1_path:
         content.append({"type": "text", "text": "--- Latest annotated H1 suggestion chart ---"})
