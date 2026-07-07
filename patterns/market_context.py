@@ -163,11 +163,15 @@ def build_market_context(
     h4_bars: list[dict],
     h1_bars: list[dict],
     daily_bars: list[dict] | None = None,
+    *,
+    spot_override: float | None = None,
 ) -> MarketContext:
     """Compute ICT signals and range alerts from live OHLC."""
     alerts: list[str] = []
     setup_tags: list[str] = []
-    spot = float(h1_bars[-1]["close"]) if h1_bars else 0.0
+    spot = float(spot_override) if spot_override is not None else (
+        float(h1_bars[-1]["close"]) if h1_bars else 0.0
+    )
 
     range_24h = compute_range_24h(h1_bars)
     is_ranging = bool(range_24h and range_24h.is_ranging)

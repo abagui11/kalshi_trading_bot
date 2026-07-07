@@ -349,6 +349,14 @@ def _validate(data: dict, market_context: MarketContext | None = None) -> Sugges
     return suggestion
 
 
+def validate_suggestion(
+    data: dict,
+    market_context: MarketContext | None = None,
+) -> Suggestion:
+    """Public wrapper for programmatic / watchdog trade validation."""
+    return _validate(data, market_context=market_context)
+
+
 def propose_trade(
     chart_paths: dict[str, str],
     trading_guide: str | None = None,

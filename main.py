@@ -8,11 +8,24 @@ import sys
 
 from bot import build_application
 from agent import run_cycle
+from watchdog import run_watchdog
+import bot_config
 
 logger = logging.getLogger(__name__)
 
 HOURLY_INTERVAL_SEC = 3600
 FIRST_RUN_DELAY_SEC = 10
+
+
+async def watchdog_job(context) -> None:
+    """Run the programmatic entry scanner in a thread pool."""
+    if not bot_config.WATCHDOG_ENABLED:
+        return
+    loop = asyncio.get_running_loop()
+    try:
+        await loop.run_in_executor(None, run_watchdog)
+    except Exception:
+        logger.exception("Watchdog job failed")
 
 
 async def hourly_job(context) -> None:
@@ -48,6 +61,16 @@ def main() -> None:
         first=FIRST_RUN_DELAY_SEC,
         name="hourly_cycle",
     )
+
+    if bot_config.WATCHDOG_ENABLED:
+        interval = max(60, min(bot_config.WATCHDOG_INTERVAL_SEC, 300))
+        app.job_queue.run_repeating(
+            watchdog_job,
+            interval=interval,
+            first=30,
+            name="watchdog_scan",
+        )
+        logger.info("Watchdog enabled — scanning every %ss", interval)
 
     logger.info(
         "Starting ETH trading agent (polling + hourly cycle every %ss, first in %ss)",

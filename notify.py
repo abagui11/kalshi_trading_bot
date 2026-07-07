@@ -92,11 +92,14 @@ async def send_suggestion_to_chat(
     pnl_footer: str,
 ) -> None:
     paths = [chart_paths] if isinstance(chart_paths, str) else list(chart_paths[:2])
-    if not paths:
-        raise FileNotFoundError("No chart paths provided")
-
+    paths = [p for p in paths if p and p != "watchdog"]
     caption = build_caption(suggestion)
     rationale_message = build_rationale_message(suggestion, pnl_footer)
+
+    if not paths:
+        text = f"{caption}\n\n{rationale_message}" if caption else rationale_message
+        await bot.send_message(chat_id=chat_id, text=text[:4096])
+        return
 
     for i, chart_path in enumerate(paths):
         path = Path(chart_path)
@@ -332,6 +335,50 @@ def broadcast(
         await broadcast_to_subscribers(bot, suggestion, chart_paths, footer)
 
     asyncio.run(_run())
+
+
+def broadcast_text(
+    suggestion: Suggestion,
+    pnl_footer: str | None = None,
+) -> None:
+    """Broadcast a watchdog / text-only trade signal (no chart images)."""
+    footer = pnl_footer or paper.format_pnl_footer()
+
+    async def _run() -> None:
+        bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        await broadcast_to_subscribers(bot, suggestion, [], footer)
+
+    asyncio.run(_run())
+
+
+def send_watchdog_monitor_alert(
+    cycle_id: str,
+    trigger_name: str,
+    suggestion: Suggestion,
+) -> None:
+    """Notify MONITOR_CHAT_ID when the watchdog fires a programmatic entry."""
+    chat_id = config.MONITOR_CHAT_ID
+    if not chat_id:
+        return
+    tps = ", ".join(f"{tp:,.2f}" for tp in suggestion.take_profits[:3]) or "n/a"
+    rr = f"{suggestion.risk_reward:.2f}" if suggestion.risk_reward is not None else "n/a"
+    text = (
+        f"WATCHDOG ENTRY — cycle {cycle_id}\n"
+        f"Trigger: {trigger_name}\n"
+        f"Action: {suggestion.action}\n"
+        f"Entry: {suggestion.entry:,.2f} | SL: {suggestion.stop_loss:,.2f} | "
+        f"TP: {tps} | R/R: {rr}\n"
+        f"(programmatic — no chart review this cycle)"
+    )
+
+    async def _run() -> None:
+        bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        await bot.send_message(chat_id=int(str(chat_id).strip()), text=text[:4096])
+
+    try:
+        asyncio.run(_run())
+    except Exception:
+        logger.exception("Failed to send watchdog monitor alert")
 
 
 def _latest_output_chart() -> Path:

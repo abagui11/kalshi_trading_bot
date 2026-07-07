@@ -264,6 +264,35 @@ def get_spot_price() -> float:
     return float(h1[-1]["close"])
 
 
+def get_live_spot_price() -> float:
+    """Current ETH-USD price from Coinbase public product endpoint."""
+    url = f"{config.MARKET_DATA_API}/products/{PRODUCT_ID}"
+    response = requests.get(url, timeout=15)
+    response.raise_for_status()
+    payload = response.json()
+    product = payload.get("product") or payload
+    price = product.get("price")
+    if price is None:
+        raise RuntimeError(f"No price in product response for {PRODUCT_ID}")
+    return float(price)
+
+
+def apply_live_spot_to_h1(
+    h1_bars: list[dict[str, float | str]],
+    spot: float,
+) -> list[dict[str, float | str]]:
+    """Update the forming H1 candle with the live ticker for intrabar scans."""
+    if not h1_bars:
+        return h1_bars
+    bars = [dict(b) for b in h1_bars]
+    last = bars[-1]
+    last["close"] = spot
+    last["high"] = max(float(last["high"]), spot)
+    last["low"] = min(float(last["low"]), spot)
+    bars[-1] = last
+    return bars
+
+
 def get_daily_bars_for_levels(limit: int = 400) -> list[dict[str, float | str]]:
     """Fetch enough daily candles for calendar key levels (week/month/quarter/year)."""
     if limit <= _MAX_CANDLES:
