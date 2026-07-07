@@ -7,6 +7,7 @@ from typing import Literal
 
 import pandas as pd
 
+from bot_config import OB_MIN_WIDTH_PCT
 from patterns.swing import Pivot, find_pivots
 
 Direction = Literal["bullish", "bearish"]
@@ -33,6 +34,23 @@ def _candle_direction(row: pd.Series) -> Direction:
     return "bullish" if float(row["close"]) >= float(row["open"]) else "bearish"
 
 
+def ob_width_pct(low: float, high: float) -> float:
+    """Zone width as percent of mid price (same formula as 24h range)."""
+    if high <= low:
+        return 0.0
+    mid = (high + low) / 2
+    return (high - low) / mid * 100
+
+
+def meets_min_ob_width(
+    low: float,
+    high: float,
+    min_width_pct: float = OB_MIN_WIDTH_PCT,
+) -> bool:
+    """True when an OB zone is at least min_width_pct wide."""
+    return ob_width_pct(low, high) >= min_width_pct
+
+
 def ob_from_displacement(
     df: pd.DataFrame,
     displacement_idx: int,
@@ -53,12 +71,16 @@ def _ob_from_displacement(
         row = df.iloc[j]
         if _candle_direction(row) != opposite:
             continue
+        low = round(float(row["low"]), 2)
+        high = round(float(row["high"]), 2)
+        if not meets_min_ob_width(low, high):
+            return None
         ts = df.index[j].strftime("%Y-%m-%dT%H:%M:%SZ")
         disp_ts = df.index[displacement_idx].strftime("%Y-%m-%dT%H:%M:%SZ")
         return OrderBlock(
             direction=direction,
-            low=round(float(row["low"]), 2),
-            high=round(float(row["high"]), 2),
+            low=low,
+            high=high,
             start_ts=ts,
             end_ts=ts,
             displacement_ts=disp_ts,

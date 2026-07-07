@@ -17,6 +17,9 @@ RUN_LLM_CRITIC_PRE_BROADCAST = True
 MIN_ETH_QTY = 0.25
 MAX_ETH_QTY = 1.0
 
+# Minimum OB zone width as % of mid price (H1 rule; applied to all timeframes).
+OB_MIN_WIDTH_PCT = 1.25
+
 # Label for the current paper epoch (shown on dashboard after reset).
 PAPER_EPOCH_LABEL = "5k_usd"
 

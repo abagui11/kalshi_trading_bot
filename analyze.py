@@ -19,6 +19,8 @@ from patterns.order_block import (
     bounds_close,
     fib_zone_bounds,
     find_matching_h1_ob,
+    meets_min_ob_width,
+    ob_width_pct,
     price_in_fib_zone,
 )
 
@@ -108,6 +110,7 @@ Detected separately on **H1** candles. On the **H1 marked chart**, valid blocks 
 | Rule | Detail |
 |------|--------|
 | **order_block JSON** | Must be an **H1 OB** (candle timestamps on the H1 chart). Never copy H12 OB bounds into order_block. |
+| **Minimum width** | OB zone must be at least **1.25%** wide (high−low as % of mid price). Narrow single-candle wicks are not valid OBs. |
 | **Entry** | Must sit inside the H1 OB **fib 0.618–0.786** sweet spot (see programmatic context for computed levels). |
 | **Rationale** | Cite **H12 OB/BRKR** for HTF bias; cite **H1 OB** only for entry justification. If zones overlap, say "H1 OB coincides with H12 OB". |
 | **No H1 fib** | If price is only inside an H12 OB (not H1 fib), return **no_trade** or wait for H1 retest. |
@@ -261,6 +264,10 @@ def _validate_order_block_entry(
     high = float(ob["high"])
     if low >= high:
         raise ValueError(f"order_block low ({low}) must be below high ({high})")
+    if not meets_min_ob_width(low, high):
+        raise ValueError(
+            f"order_block width ({ob_width_pct(low, high):.2f}%) is below minimum 1.25%"
+        )
 
     direction = _trade_direction(suggestion.action)
     entry = float(suggestion.entry)  # type: ignore[arg-type]

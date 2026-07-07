@@ -7,6 +7,7 @@ from typing import Literal
 
 import pandas as pd
 
+from patterns.order_block import meets_min_ob_width
 from patterns.swing import Pivot, find_pivots
 
 ZoneType = Literal["order_block", "breaker"]
@@ -72,7 +73,11 @@ def _find_ob_candidate(
         row = df.iloc[j]
         if _candle_direction(row) != opposite:
             continue
-        return (j, float(row["low"]), float(row["high"]), _ts_at(df, j))
+        low = round(float(row["low"]), 2)
+        high = round(float(row["high"]), 2)
+        if not meets_min_ob_width(low, high):
+            return None
+        return (j, low, high, _ts_at(df, j))
     return None
 
 

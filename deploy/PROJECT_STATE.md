@@ -242,6 +242,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 | `MAX_REFINE_PASSES` | `3` | audit retry budget before downgrade |
 | `MAX_OPEN_TRADES` | `20` | paper FIFO cap |
 | `MIN_ETH_QTY` / `MAX_ETH_QTY` | `0.25` / `1.0` | paper size bounds |
+| `OB_MIN_WIDTH_PCT` | `1.25` | minimum OB zone width (% of mid price; H1 rule, all TFs) |
 | `PAPER_EPOCH_LABEL` | `"5k_usd"` | dashboard epoch label |
 | `MACRO_CONTEXT_ENABLED` | `True` | RSS poll + macro advisory injection |
 | `MACRO_POLL_INTERVAL_SEC` | `300` | RSS poll cadence |
@@ -266,6 +267,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-07 | OB minimum width filter (`OB_MIN_WIDTH_PCT=1.25`): H1 + H12 detection and analyze validation |
 | 2026-07-07 | Macro headline layer: RSS poll, webhook ingest, keyword→Haiku classify, pulse advisories, watchdog soft gates, dashboard macro monitor |
 | 2026-07-07 | Added documentation maintenance section; filled config defaults; aligned diagrams with audit loops, watchdog, and chat path |
 | 2026-07-07 | Initial project state document created |

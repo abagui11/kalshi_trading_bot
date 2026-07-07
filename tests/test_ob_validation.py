@@ -37,6 +37,16 @@ def test_validate_rejects_entry_outside_fib_zone():
         _validate(_trade_payload(entry=2400.0))
 
 
+def test_validate_rejects_narrow_order_block():
+    with pytest.raises(ValueError, match="below minimum 1.25%"):
+        _validate(_trade_payload(order_block={
+            "low": 2400.0,
+            "high": 2405.0,
+            "start_ts": "2026-06-20T12:00:00Z",
+            "end_ts": "2026-06-20T12:00:00Z",
+        }))
+
+
 def test_validate_rejects_h12_bounds_as_order_block():
     h1_ob = OrderBlock(
         direction="bullish",

@@ -10,6 +10,8 @@ from patterns.order_block import (
     fib_zone_bounds,
     find_matching_h1_ob,
     format_ob_with_fib,
+    meets_min_ob_width,
+    ob_width_pct,
     price_in_fib_zone,
     zones_overlap,
 )
@@ -78,3 +80,13 @@ def test_format_ob_with_fib_includes_h1_label_context():
     text = format_ob_with_fib(ob)
     assert "H1 OB" in text
     assert "2,404.72" in text
+
+
+def test_ob_width_pct():
+    assert ob_width_pct(100.0, 101.26) == pytest.approx(1.25, abs=0.01)
+    assert ob_width_pct(100.0, 101.0) == pytest.approx(1.0, abs=0.01)
+
+
+def test_meets_min_ob_width():
+    assert meets_min_ob_width(100.0, 101.26)
+    assert not meets_min_ob_width(100.0, 101.0)
