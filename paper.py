@@ -262,30 +262,241 @@ def _unrealized_pnl(side: str, eth_qty: float, avg_entry: float, spot: float) ->
     return eth_qty * (avg_entry - spot)
 
 
-def _position_usd(entry: float, stop_loss: float) -> float:
-    risk_usd = config.PAPER_PORTFOLIO_VALUE * 0.01
-    sl_pct = abs(entry - stop_loss) / entry
-    if sl_pct <= 0:
+def _open_eth_qty(suggestion: Suggestion, cash: float) -> float:
+    """Position size from validated suggestion.size, capped by available cash."""
+    entry = float(suggestion.entry)  # type: ignore[arg-type]
+    eth_qty = float(suggestion.size)
+    if eth_qty <= 0 or entry <= 0 or cash <= 0:
         return 0.0
-    return risk_usd / sl_pct
-
-
-def _compute_eth_qty(entry: float, stop_loss: float, cash: float) -> float:
-    """1% risk sizing, capped by cash and bot_config MIN/MAX ETH bounds."""
-    if entry <= 0 or cash <= 0:
-        return 0.0
-    notional = min(_position_usd(entry, stop_loss), cash)
-    if notional <= 0:
-        return 0.0
-    eth_qty = notional / entry
-    eth_qty = min(eth_qty, bot_config.MAX_ETH_QTY)
+    max_affordable = cash / entry
+    eth_qty = min(eth_qty, max_affordable, bot_config.MAX_ETH_QTY)
     if eth_qty < bot_config.MIN_ETH_QTY:
-        min_notional = bot_config.MIN_ETH_QTY * entry
-        if min_notional > cash:
-            return 0.0
-        eth_qty = bot_config.MIN_ETH_QTY
+        return 0.0
     return eth_qty
 
+
+def _signed_eth_qty(side: str, eth_qty: float) -> float:
+    return eth_qty if side == "long" else -eth_qty
+
+
+def _aggregate_signed_qty(positions: list[dict]) -> float:
+    return sum(_signed_eth_qty(str(p["side"]), float(p["eth_qty"])) for p in positions)
+
+
+def _close_all_positions(
+    conn: sqlite3.Connection,
+    cash: float,
+    positions: list[dict],
+    spot: float,
+    cycle_id: str | None,
+    reason: str,
+) -> float:
+    for position in list(positions):
+        cash = _close_position_at_market(conn, cash, position, spot, cycle_id, reason)
+    return cash
+
+
+def _reduce_position(
+    conn: sqlite3.Connection,
+    cash: float,
+    position: dict,
+    close_qty: float,
+    spot: float,
+    cycle_id: str | None,
+    reason: str,
+) -> float:
+    side = str(position["side"])
+    eth_qty = float(position["eth_qty"])
+    close_qty = min(close_qty, eth_qty)
+    if close_qty <= 0:
+        return cash
+
+    avg_entry = float(position["avg_entry"])
+    pos_id = int(position["id"])
+
+    if side == "long":
+        cash += close_qty * spot
+    else:
+        cash += close_qty * (2 * avg_entry - spot)
+
+    remaining = eth_qty - close_qty
+    if remaining < bot_config.MIN_ETH_QTY:
+        position["eth_qty"] = eth_qty
+        return _close_position_at_market(conn, cash, position, spot, cycle_id, reason)
+
+    conn.execute(
+        "UPDATE paper_positions SET eth_qty = ? WHERE id = ?",
+        (remaining, pos_id),
+    )
+    open_positions = _fetch_open_positions(conn)
+    equity = _equity(cash, open_positions, spot)
+    _log_trade(
+        conn, "close", cycle_id, side, close_qty, spot, cash, equity, pos_id, reason
+    )
+    return cash
+
+
+def _reduce_positions_fifo(
+    conn: sqlite3.Connection,
+    cash: float,
+    positions: list[dict],
+    reduce_qty: float,
+    spot: float,
+    cycle_id: str | None,
+    reason: str,
+) -> float:
+    remaining = reduce_qty
+    for position in positions:
+        if remaining <= 0:
+            break
+        take = min(float(position["eth_qty"]), remaining)
+        cash = _reduce_position(conn, cash, position, take, spot, cycle_id, reason)
+        remaining -= take
+    return cash
+
+
+def _update_position_metadata(
+    conn: sqlite3.Connection,
+    position: dict,
+    suggestion: Suggestion,
+    cycle_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        UPDATE paper_positions
+        SET stop_loss = ?, take_profits = ?, risk_reward = ?, suggested_size = ?,
+            action = ?, open_cycle_id = ?
+        WHERE id = ?
+        """,
+        (
+            float(suggestion.stop_loss),  # type: ignore[arg-type]
+            json.dumps(suggestion.take_profits),
+            suggestion.risk_reward,
+            suggestion.size,
+            suggestion.action,
+            cycle_id,
+            int(position["id"]),
+        ),
+    )
+
+
+def _add_to_net_position(
+    conn: sqlite3.Connection,
+    cash: float,
+    position: dict,
+    suggestion: Suggestion,
+    add_qty: float,
+    spot: float,
+    cycle_id: str | None,
+) -> float:
+    entry = float(suggestion.entry)  # type: ignore[arg-type]
+    if add_qty <= 0:
+        return cash
+
+    notional = add_qty * entry
+    if cash < notional:
+        return cash
+
+    old_qty = float(position["eth_qty"])
+    old_entry = float(position["avg_entry"])
+    new_qty = old_qty + add_qty
+    new_avg = (old_qty * old_entry + add_qty * entry) / new_qty
+    side = str(position["side"])
+    pos_id = int(position["id"])
+
+    cash -= notional
+    conn.execute(
+        """
+        UPDATE paper_positions
+        SET eth_qty = ?, avg_entry = ?, stop_loss = ?, take_profits = ?,
+            risk_reward = ?, suggested_size = ?, action = ?, open_cycle_id = ?
+        WHERE id = ?
+        """,
+        (
+            new_qty,
+            new_avg,
+            float(suggestion.stop_loss),  # type: ignore[arg-type]
+            json.dumps(suggestion.take_profits),
+            suggestion.risk_reward,
+            suggestion.size,
+            suggestion.action,
+            cycle_id,
+            pos_id,
+        ),
+    )
+    open_positions = _fetch_open_positions(conn)
+    equity = _equity(cash, open_positions, spot)
+    _log_trade(conn, "open", cycle_id, side, add_qty, entry, cash, equity, pos_id, None)
+    return cash
+
+
+def _apply_trade_with_netting(
+    conn: sqlite3.Connection,
+    cash: float,
+    suggestion: Suggestion,
+    spot: float,
+    cycle_id: str | None,
+) -> float:
+    """Reconcile incoming trade against open exposure (Option A: immediate net at spot)."""
+    incoming_qty = _open_eth_qty(suggestion, cash)
+    if incoming_qty <= 0:
+        return cash
+
+    incoming_signed = (
+        incoming_qty if suggestion.action in LONG_ACTIONS else -incoming_qty
+    )
+    positions = _fetch_open_positions(conn)
+    current_signed = _aggregate_signed_qty(positions)
+    target_signed = current_signed + incoming_signed
+
+    if not positions:
+        return _open_position(conn, cash, suggestion, spot, cycle_id)
+
+    if abs(target_signed) < bot_config.MIN_ETH_QTY:
+        return _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+
+    if target_signed == 0:
+        return _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+
+    current_side = "long" if current_signed > 0 else "short"
+    target_side = "long" if target_signed > 0 else "short"
+
+    if target_side != current_side:
+        cash = _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+        return _open_position(
+            conn,
+            cash,
+            suggestion,
+            spot,
+            cycle_id,
+            eth_qty_override=abs(target_signed),
+        )
+
+    if abs(target_signed) > abs(current_signed):
+        add_qty = abs(target_signed) - abs(current_signed)
+        same_side = [p for p in positions if str(p["side"]) == current_side]
+        if not same_side:
+            return _open_position(
+                conn,
+                cash,
+                suggestion,
+                spot,
+                cycle_id,
+                eth_qty_override=abs(target_signed),
+            )
+        return _add_to_net_position(
+            conn, cash, same_side[0], suggestion, add_qty, spot, cycle_id
+        )
+
+    if abs(target_signed) < abs(current_signed):
+        reduce_qty = abs(current_signed) - abs(target_signed)
+        same_side = [p for p in positions if str(p["side"]) == current_side]
+        return _reduce_positions_fifo(
+            conn, cash, same_side, reduce_qty, spot, cycle_id, "signal_net"
+        )
+
+    _update_position_metadata(conn, positions[0], suggestion, cycle_id)
+    return cash
 
 def _parse_take_profits(raw: str | list | None) -> list[float]:
     if not raw:
@@ -741,11 +952,24 @@ def _open_position(
     suggestion: Suggestion,
     spot: float,
     cycle_id: str | None,
+    *,
+    eth_qty_override: float | None = None,
 ) -> float:
     entry = float(suggestion.entry)  # type: ignore[arg-type]
     stop = float(suggestion.stop_loss)  # type: ignore[arg-type]
-    eth_qty = _compute_eth_qty(entry, stop, cash)
-    if eth_qty <= 0:
+    eth_qty = (
+        eth_qty_override
+        if eth_qty_override is not None
+        else _open_eth_qty(suggestion, cash)
+    )
+    if eth_qty_override is not None:
+        if eth_qty <= 0 or entry <= 0 or cash <= 0:
+            return cash
+        max_affordable = cash / entry
+        eth_qty = min(eth_qty, max_affordable, bot_config.MAX_ETH_QTY)
+        if eth_qty < bot_config.MIN_ETH_QTY:
+            return cash
+    elif eth_qty <= 0:
         return cash
 
     notional = eth_qty * entry
@@ -789,15 +1013,9 @@ def update(suggestion: Suggestion, spot_price: float, cycle_id: str | None = Non
         cash = _check_sl_tp_closes(conn, cash, spot_price, cycle_id)
 
         if suggestion.action in TRADE_ACTIONS:
-            open_positions = _fetch_open_positions(conn)
-            while len(open_positions) >= bot_config.MAX_OPEN_TRADES:
-                oldest = open_positions[0]
-                cash = _close_position_at_market(
-                    conn, cash, oldest, spot_price, cycle_id, "fifo_max_positions"
-                )
-                open_positions = _fetch_open_positions(conn)
-
-            cash = _open_position(conn, cash, suggestion, spot_price, cycle_id)
+            cash = _apply_trade_with_netting(
+                conn, cash, suggestion, spot_price, cycle_id
+            )
 
         conn.execute(
             """

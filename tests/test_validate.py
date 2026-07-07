@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+import bot_config
 import validate
 from models import Suggestion
 
@@ -26,6 +27,24 @@ class ValidateTradeRiskTests(unittest.TestCase):
         s = self._short()
         validate.validate_trade_risk(s, portfolio_value=1000.0)
         self.assertAlmostEqual(s.risk_reward, 1.9375, places=3)
+        self.assertGreater(s.size, 0)
+
+    def test_overwrites_inflated_llm_size(self) -> None:
+        s = self._short(size=0.99)
+        validate.validate_trade_risk(s, portfolio_value=5000.0)
+        expected = validate.compute_eth_qty(
+            float(s.entry), float(s.stop_loss), cash=5000.0, portfolio_value=5000.0
+        )
+        self.assertAlmostEqual(s.size, round(expected, 4), places=4)
+        self.assertNotEqual(s.size, 0.99)
+
+    def test_compute_eth_qty_caps_at_max(self) -> None:
+        qty = validate.compute_eth_qty(1700.0, 1717.0, cash=5000.0, portfolio_value=5000.0)
+        self.assertAlmostEqual(qty, bot_config.MAX_ETH_QTY, places=4)
+
+    def test_compute_eth_qty_raises_to_min_when_affordable(self) -> None:
+        qty = validate.compute_eth_qty(1700.0, 1200.0, cash=5000.0, portfolio_value=5000.0)
+        self.assertAlmostEqual(qty, bot_config.MIN_ETH_QTY, places=4)
 
     def test_rejects_micro_stop(self) -> None:
         s = self._short(entry=1576.0, stop_loss=1577.0, take_profits=[1574.0])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bot_config
 import config
 from models import Suggestion
 
@@ -73,13 +74,47 @@ def achievable_risk_usd(
     return deployable * sl_pct
 
 
+def compute_eth_qty(
+    entry: float,
+    stop_loss: float,
+    *,
+    cash: float | None = None,
+    portfolio_value: float | None = None,
+) -> float:
+    """1% risk sizing, capped by cash and bot_config MIN/MAX ETH bounds."""
+    if entry <= 0:
+        return 0.0
+    portfolio = portfolio_value if portfolio_value is not None else config.PAPER_PORTFOLIO_VALUE
+    available = cash if cash is not None else portfolio
+    if available <= 0:
+        return 0.0
+
+    sl_pct = stop_distance_pct(entry, stop_loss)
+    if sl_pct <= 0:
+        return 0.0
+
+    risk_usd = portfolio * TARGET_RISK_PCT
+    notional = min(risk_usd / sl_pct, available)
+    if notional <= 0:
+        return 0.0
+
+    eth_qty = notional / entry
+    eth_qty = min(eth_qty, bot_config.MAX_ETH_QTY)
+    if eth_qty < bot_config.MIN_ETH_QTY:
+        min_notional = bot_config.MIN_ETH_QTY * entry
+        if min_notional > available:
+            return 0.0
+        eth_qty = bot_config.MIN_ETH_QTY
+    return eth_qty
+
+
 def validate_trade_risk(
     suggestion: Suggestion,
     portfolio_value: float | None = None,
 ) -> None:
     """Validate stop width, direction, R/R (recomputed), and 1% sizing feasibility.
 
-    Overwrites ``suggestion.risk_reward`` with the recomputed value on success.
+    Overwrites ``suggestion.risk_reward`` and ``suggestion.size`` on success.
     """
     if suggestion.action not in TRADE_ACTIONS:
         return
@@ -135,3 +170,16 @@ def validate_trade_risk(
         )
 
     suggestion.risk_reward = round(rr, 4)
+
+    qty = compute_eth_qty(
+        entry,
+        stop_loss,
+        cash=portfolio,
+        portfolio_value=portfolio,
+    )
+    if qty <= 0:
+        raise ValueError(
+            f"cannot size trade for 1% risk on ${portfolio:,.0f} "
+            f"(entry {entry:,.2f}, stop {stop_loss:,.2f})"
+        )
+    suggestion.size = round(qty, 4)

@@ -299,14 +299,6 @@ def _ensure_min_rr(
     return tps
 
 
-def _suggested_size_eth(entry: float, stop_loss: float) -> float:
-    risk_usd = config.PAPER_PORTFOLIO_VALUE * validate.TARGET_RISK_PCT
-    sl_pct = abs(entry - stop_loss) / entry
-    if sl_pct <= 0:
-        return 0.0
-    return round((risk_usd / sl_pct) / entry, 4)
-
-
 def _order_block_dict(ob: OrderBlock) -> dict:
     return {
         "low": ob.low,
@@ -427,13 +419,12 @@ def build_suggestion(
     )
     take_profits = _ensure_min_rr(entry, stop_loss, take_profits, trigger.direction)
     action = "spot_buy" if trigger.direction == "bullish" else "spot_sell"
-    size = _suggested_size_eth(entry, stop_loss)
 
     rationale = _build_rationale(trigger, ctx, ob, entry)
 
     payload = {
         "action": action,
-        "size": size,
+        "size": 0,
         "entry": entry,
         "stop_loss": stop_loss,
         "take_profits": take_profits,

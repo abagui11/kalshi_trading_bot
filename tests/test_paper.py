@@ -11,6 +11,7 @@ from unittest.mock import patch
 import bot_config
 import config
 import paper
+import validate
 from models import Suggestion
 
 
@@ -42,11 +43,13 @@ class PaperPositionTests(unittest.TestCase):
             risk_reward=2.19,
             rationale="test short",
         )
+        validate.validate_trade_risk(suggestion, portfolio_value=5000.0)
         paper.update(suggestion, spot_price=1576.0, cycle_id="test_cycle_short")
 
         state = paper.get_state()
         self.assertEqual(state["side"], "short")
         self.assertEqual(state["action"], "deriv_sell")
+        self.assertAlmostEqual(state["eth_qty"], suggestion.size, places=4)
         self.assertEqual(state["stop_loss"], 1592.0)
         self.assertEqual(state["take_profits"], [1545.0, 1515.0, 1490.0])
         self.assertEqual(state["open_cycle_id"], "test_cycle_short")
@@ -228,31 +231,163 @@ class PaperPositionTests(unittest.TestCase):
         self.assertIn("$1,576.00", detail)
         self.assertIn("realized -$", detail)
 
-    def test_multiple_positions_stay_open(self) -> None:
+    def test_opposite_signal_partially_nets_long(self) -> None:
+        paper.restore_open_position(
+            action="spot_buy",
+            entry=1800.0,
+            eth_qty=1.0,
+            stop_loss=1700.0,
+            take_profits=[1900.0],
+            risk_reward=1.0,
+            suggested_size=1.0,
+            opened_at="2026-07-07T12:00:00Z",
+            open_cycle_id="cycle_long",
+            spot_price=1800.0,
+        )
         short = Suggestion(
             action="deriv_sell",
-            size=0.64,
-            entry=1576.0,
-            stop_loss=1592.0,
-            take_profits=[1545.0],
-            risk_reward=2.0,
-            rationale="short one",
+            size=0.5,
+            entry=1850.0,
+            stop_loss=1950.0,
+            take_profits=[1750.0],
+            risk_reward=1.0,
+            rationale="short hedge",
+        )
+        validate.validate_trade_risk(short, portfolio_value=5000.0)
+        paper.update(short, spot_price=1850.0, cycle_id="cycle_short")
+
+        state = paper.get_state()
+        self.assertEqual(state["side"], "long")
+        self.assertAlmostEqual(state["eth_qty"], 1.0 - short.size, places=4)
+        self.assertEqual(state["open_cycle_id"], "cycle_long")
+        self.assertEqual(state["stop_loss"], 1700.0)
+        positions = paper.get_open_positions(1850.0)
+        self.assertEqual(len(positions), 1)
+
+    def test_opposite_signal_full_offset_goes_flat(self) -> None:
+        paper.restore_open_position(
+            action="spot_buy",
+            entry=1800.0,
+            eth_qty=0.5,
+            stop_loss=1700.0,
+            take_profits=[1900.0],
+            risk_reward=1.0,
+            suggested_size=0.5,
+            opened_at="2026-07-07T12:00:00Z",
+            open_cycle_id="cycle_long",
+            spot_price=1800.0,
+        )
+        short = Suggestion(
+            action="deriv_sell",
+            size=0.5,
+            entry=1850.0,
+            stop_loss=1950.0,
+            take_profits=[1750.0],
+            risk_reward=1.0,
+            rationale="short",
+        )
+        validate.validate_trade_risk(short, portfolio_value=5000.0)
+        paper.update(short, spot_price=1850.0, cycle_id="cycle_short")
+
+        self.assertFalse(paper.is_open())
+        closed = paper.get_closed_trades(limit=2)
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0]["close_reason"], "signal_net")
+
+    def test_opposite_signal_flips_to_short(self) -> None:
+        paper.restore_open_position(
+            action="spot_buy",
+            entry=1800.0,
+            eth_qty=0.5,
+            stop_loss=1700.0,
+            take_profits=[1900.0],
+            risk_reward=1.0,
+            suggested_size=0.5,
+            opened_at="2026-07-07T12:00:00Z",
+            open_cycle_id="cycle_long",
+            spot_price=1800.0,
+        )
+        short = Suggestion(
+            action="deriv_sell",
+            size=1.0,
+            entry=1850.0,
+            stop_loss=1900.0,
+            take_profits=[1750.0],
+            risk_reward=1.0,
+            rationale="short flip",
+        )
+        validate.validate_trade_risk(short, portfolio_value=5000.0)
+        paper.update(short, spot_price=1850.0, cycle_id="cycle_short")
+
+        state = paper.get_state()
+        self.assertEqual(state["side"], "short")
+        self.assertAlmostEqual(state["eth_qty"], short.size - 0.5, places=4)
+        self.assertEqual(state["stop_loss"], 1900.0)
+        self.assertEqual(state["open_cycle_id"], "cycle_short")
+
+    def test_short_then_long_nets_same_way(self) -> None:
+        paper.restore_open_position(
+            action="deriv_sell",
+            entry=1850.0,
+            eth_qty=1.0,
+            stop_loss=1950.0,
+            take_profits=[1750.0],
+            risk_reward=1.0,
+            suggested_size=1.0,
+            opened_at="2026-07-07T12:00:00Z",
+            open_cycle_id="cycle_short",
+            spot_price=1850.0,
         )
         long = Suggestion(
             action="spot_buy",
-            size=0.32,
-            entry=1572.0,
-            stop_loss=1543.0,
-            take_profits=[1610.0],
-            risk_reward=2.27,
+            size=0.5,
+            entry=1800.0,
+            stop_loss=1700.0,
+            take_profits=[1900.0],
+            risk_reward=1.0,
+            rationale="long hedge",
+        )
+        validate.validate_trade_risk(long, portfolio_value=5000.0)
+        paper.update(long, spot_price=1800.0, cycle_id="cycle_long")
+
+        state = paper.get_state()
+        self.assertEqual(state["side"], "short")
+        self.assertAlmostEqual(state["eth_qty"], 1.0 - long.size, places=4)
+
+    def test_same_direction_adds_to_position(self) -> None:
+        first = Suggestion(
+            action="spot_buy",
+            size=0.5,
+            entry=1800.0,
+            stop_loss=1700.0,
+            take_profits=[1900.0],
+            risk_reward=1.0,
+            rationale="long one",
+        )
+        second = Suggestion(
+            action="spot_buy",
+            size=0.5,
+            entry=1850.0,
+            stop_loss=1750.0,
+            take_profits=[1950.0],
+            risk_reward=1.0,
             rationale="long two",
         )
-        paper.update(short, spot_price=1576.0, cycle_id="cycle_short")
-        paper.update(long, spot_price=1572.0, cycle_id="cycle_long")
-        positions = paper.get_open_positions(1570.0)
-        self.assertEqual(len(positions), 2)
-        cycles = {p["open_cycle_id"] for p in positions}
-        self.assertEqual(cycles, {"cycle_short", "cycle_long"})
+        validate.validate_trade_risk(first, portfolio_value=5000.0)
+        validate.validate_trade_risk(second, portfolio_value=5000.0)
+        paper.update(first, spot_price=1800.0, cycle_id="cycle_long_1")
+        paper.update(second, spot_price=1850.0, cycle_id="cycle_long_2")
+
+        state = paper.get_state()
+        self.assertEqual(state["side"], "long")
+        self.assertAlmostEqual(state["eth_qty"], first.size + second.size, places=4)
+        expected_entry = (first.size * 1800.0 + second.size * 1850.0) / (
+            first.size + second.size
+        )
+        self.assertAlmostEqual(state["avg_entry"], expected_entry, places=2)
+        self.assertEqual(state["stop_loss"], 1750.0)
+        positions = paper.get_open_positions(1850.0)
+        self.assertEqual(len(positions), 1)
 
     def test_sl_closes_position_without_new_trade(self) -> None:
         paper.restore_open_position(
@@ -272,51 +407,62 @@ class PaperPositionTests(unittest.TestCase):
         closed = paper.get_closed_trades(limit=1)
         self.assertEqual(closed[0]["close_reason"], "stop_loss")
 
-    def test_fifo_closes_oldest_when_at_max(self) -> None:
-        with patch.object(bot_config, "MAX_OPEN_TRADES", 2):
-            for i in range(2):
-                paper.update(
-                    Suggestion(
-                        action="deriv_sell",
-                        size=0.5,
-                        entry=1576.0 + i,
-                        stop_loss=1600.0 + i,
-                        take_profits=[1500.0],
-                        risk_reward=2.0,
-                        rationale=f"short {i}",
-                    ),
-                    spot_price=1576.0,
-                    cycle_id=f"cycle_{i}",
-                )
-            paper.update(
-                Suggestion(
-                    action="spot_buy",
-                    size=0.3,
-                    entry=1570.0,
-                    stop_loss=1540.0,
-                    take_profits=[1620.0],
-                    risk_reward=2.0,
-                    rationale="third trade",
-                ),
-                spot_price=1570.0,
-                cycle_id="cycle_new",
-            )
+    def test_opposite_signal_reduces_existing_short_exposure(self) -> None:
+        paper.restore_open_position(
+            action="deriv_sell",
+            entry=1576.0,
+            eth_qty=1.0,
+            stop_loss=1600.0,
+            take_profits=[1500.0],
+            risk_reward=2.0,
+            suggested_size=1.0,
+            opened_at="2026-07-07T12:00:00Z",
+            open_cycle_id="cycle_short",
+            spot_price=1576.0,
+        )
+        long = Suggestion(
+            action="spot_buy",
+            size=0.3,
+            entry=1570.0,
+            stop_loss=1540.0,
+            take_profits=[1620.0],
+            risk_reward=2.0,
+            rationale="long hedge",
+        )
+        validate.validate_trade_risk(long, portfolio_value=1000.0)
+        paper.update(long, spot_price=1570.0, cycle_id="cycle_new")
+
         positions = paper.get_open_positions(1570.0)
-        self.assertEqual(len(positions), 2)
-        cycles = {p["open_cycle_id"] for p in positions}
-        self.assertIn("cycle_new", cycles)
-        self.assertNotIn("cycle_0", cycles)
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["side"], "short")
+        self.assertAlmostEqual(positions[0]["eth_qty"], 1.0 - long.size, places=4)
 
     def test_compute_eth_qty_caps_at_max(self) -> None:
         with patch.object(config, "PAPER_PORTFOLIO_VALUE", 5000.0):
-            qty = paper._compute_eth_qty(1700.0, 1717.0, cash=5000.0)
+            qty = validate.compute_eth_qty(1700.0, 1717.0, cash=5000.0)
         self.assertAlmostEqual(qty, bot_config.MAX_ETH_QTY, places=4)
 
     def test_compute_eth_qty_raises_to_min_when_affordable(self) -> None:
         with patch.object(config, "PAPER_PORTFOLIO_VALUE", 5000.0):
             # Wide stop → small risk-based size; should bump to MIN_ETH_QTY.
-            qty = paper._compute_eth_qty(1700.0, 1200.0, cash=5000.0)
+            qty = validate.compute_eth_qty(1700.0, 1200.0, cash=5000.0)
         self.assertAlmostEqual(qty, bot_config.MIN_ETH_QTY, places=4)
+
+    def test_open_uses_validated_size_not_llm_placeholder(self) -> None:
+        suggestion = Suggestion(
+            action="deriv_sell",
+            size=0.99,
+            entry=1576.0,
+            stop_loss=1592.0,
+            take_profits=[1545.0],
+            risk_reward=2.0,
+            rationale="wrong llm size",
+        )
+        validate.validate_trade_risk(suggestion, portfolio_value=5000.0)
+        self.assertNotEqual(suggestion.size, 0.99)
+        paper.update(suggestion, spot_price=1576.0, cycle_id="size_cycle")
+        state = paper.get_state()
+        self.assertAlmostEqual(state["eth_qty"], suggestion.size, places=4)
 
     def test_archive_epoch_and_reset(self) -> None:
         paper.update(
