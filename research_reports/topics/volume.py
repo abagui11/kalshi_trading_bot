@@ -34,7 +34,7 @@ def build_volume_report() -> ResearchReport:
             headline="Volume data temporarily unavailable.",
             sections=[("Error", [f"• {e}" for e in errors])],
             interpretation=["Retry later."],
-            sources=["Coinbase H1 candles", "Binance Futures API", "Bybit API"],
+            sources=["Coinbase H1 candles", "Hyperliquid", "Kraken Futures", "Gate.io", "Binance", "Bybit"],
         )
 
     metrics: list[str] = []
@@ -65,5 +65,5 @@ def build_volume_report() -> ResearchReport:
         headline=headline,
         sections=[("24h volume", metrics)],
         interpretation=interpretation,
-        sources=["Coinbase H1 candles", "Binance Futures API", "Bybit API"],
+        sources=["Coinbase H1 candles", "Hyperliquid", "Kraken Futures", "Gate.io", "Binance", "Bybit"],
     )

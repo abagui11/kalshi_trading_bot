@@ -21,14 +21,18 @@ def build_funding_report() -> ResearchReport:
             title="ETH Funding",
             headline="Funding data temporarily unavailable.",
             sections=[("Error", [f"• {exc}"])],
-            interpretation=["Retry later — Binance may be geo-blocked; Bybit fallback also failed."],
-            sources=["Binance Futures API", "Bybit API"],
+            interpretation=["Retry later — perp venues may be geo-blocked on this host."],
+            sources=["Hyperliquid", "Kraken Futures", "Gate.io", "Binance", "Bybit"],
         )
 
-    headline = f"ETH perp funding {snap.current_rate_pct:+.4f}% (8h, {snap.symbol} via {snap.source})"
+    headline = (
+        f"ETH perp funding {snap.current_rate_pct:+.4f}% "
+        f"({snap.interval_note}, {snap.symbol} via {snap.source})"
+    )
     metrics = [
         f"• Exchange: {snap.source}",
-        f"• Current rate: {_fmt_pct(snap.current_rate_pct)} per 8h",
+        f"• Funding interval: {snap.interval_note}",
+        f"• Current rate: {_fmt_pct(snap.current_rate_pct)}",
         f"• 7d average: {_fmt_pct(snap.avg_7d_pct)}",
         f"• 7d range: {_fmt_pct(snap.min_7d_pct)} to {_fmt_pct(snap.max_7d_pct)}",
     ]

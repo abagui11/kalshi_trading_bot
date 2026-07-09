@@ -18,48 +18,70 @@ def test_fetch_funding_parses_binance_response():
     premium = {"lastFundingRate": "0.0001", "nextFundingTime": 1234567890000}
     history = [{"fundingRate": "0.0002"}, {"fundingRate": "0.0001"}]
 
-    with patch("metrics.fetch._get_json") as mock_get:
-        mock_get.side_effect = [premium, history]
-        snap = fetch.fetch_funding()
+    with patch("metrics.fetch._funding_hyperliquid", side_effect=RuntimeError("skip")):
+        with patch("metrics.fetch._funding_kraken", side_effect=RuntimeError("skip")):
+            with patch("metrics.fetch._funding_gate", side_effect=RuntimeError("skip")):
+                with patch("metrics.fetch._get_json") as mock_get:
+                    mock_get.side_effect = [premium, history]
+                    snap = fetch.fetch_funding()
 
     assert snap.current_rate_pct == 0.01
     assert snap.avg_7d_pct is not None
     assert snap.source == "binance"
 
 
-def test_fetch_funding_falls_back_to_bybit():
-    bybit_ticker = {
-        "result": {
-            "list": [
-                {
-                    "symbol": "ETHUSDT",
-                    "fundingRate": "0.00015",
-                    "nextFundingTime": "123",
-                }
-            ]
-        }
-    }
-    bybit_history = {
-        "result": {
-            "list": [
-                {"fundingRate": "0.0002"},
-                {"fundingRate": "0.0001"},
-            ]
-        }
-    }
+def test_fetch_funding_uses_hyperliquid_when_binance_bybit_blocked():
+    hl_meta = [
+        {"universe": [{"name": "ETH"}]},
+        [{"funding": "0.00012", "dayNtlVlm": "999"}],
+    ]
+    hl_history = [{"fundingRate": "0.0001"}, {"fundingRate": "0.00015"}]
 
-    def _side_effect(url, params=None, timeout=20.0):
-        if "binance.com" in url:
+    def _side_effect(url, body=None, params=None, timeout=20.0):
+        if body is not None:
+            if body.get("type") == "metaAndAssetCtxs":
+                return hl_meta
+            if body.get("type") == "fundingHistory":
+                return hl_history
+        if url and "binance.com" in url:
             raise requests.HTTPError("451 blocked")
-        if "tickers" in url:
-            return bybit_ticker
-        return bybit_history
+        if url and "bybit.com" in url:
+            raise requests.HTTPError("403 blocked")
+        raise RuntimeError(f"unexpected: {url} {body}")
 
-    with patch("metrics.fetch._get_json", side_effect=_side_effect):
-        snap = fetch.fetch_funding()
+    with patch("metrics.fetch._post_json", side_effect=lambda url, body, timeout=20.0: _side_effect(url, body=body)):
+        with patch("metrics.fetch._get_json", side_effect=lambda url, params=None, timeout=20.0: _side_effect(url, params=params)):
+            snap = fetch.fetch_funding()
 
-    assert snap.source == "bybit"
-    assert snap.current_rate_pct == pytest.approx(0.015)
+    assert snap.source == "hyperliquid"
+    assert snap.current_rate_pct == pytest.approx(0.012)
+
+
+def test_fetch_perp_volume_uses_kraken_when_earlier_sources_fail():
+    kraken_ticker = {
+        "tickers": [
+            {"symbol": "PF_ETHUSD", "volumeQuote": 5000000.0},
+        ]
+    }
+
+    def _get_side_effect(url, params=None, timeout=20.0):
+        if "kraken.com" in url:
+            return kraken_ticker
+        if "gateio" in url:
+            raise RuntimeError("gate down")
+        if "binance.com" in url:
+            raise requests.HTTPError("451")
+        raise RuntimeError(url)
+
+    def _post_side_effect(url, body, timeout=20.0):
+        raise RuntimeError("hl down")
+
+    with patch("metrics.fetch._post_json", side_effect=_post_side_effect):
+        with patch("metrics.fetch._get_json", side_effect=_get_side_effect):
+            snap = fetch.fetch_perp_volume()
+
+    assert snap.source == "kraken"
+    assert snap.volume_24h_quote == 5_000_000.0
 
 
 def test_fetch_spot_volume_from_h1_bars():

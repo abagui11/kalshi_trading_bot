@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
@@ -16,14 +17,26 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+_HTTP_HEADERS = {
+    "User-Agent": "eth-trading-agent/1.0 (research-metrics)",
+    "Accept": "application/json",
+}
+
 _BINANCE_FAPI = "https://fapi.binance.com"
 _BYBIT_API = "https://api.bybit.com"
+_KRAKEN_FUTURES = "https://futures.kraken.com/derivatives/api/v3"
+_HYPERLIQUID = "https://api.hyperliquid.xyz/info"
+_GATE_FUTURES = "https://api.gateio.ws/api/v4/futures/usdt"
 _COINGECKO = "https://api.coingecko.com/api/v3"
 _HASHRATE_INDEX_URLS = (
     "https://api.hashrateindex.com/v1/hashprice/current",
     "https://data.hashrateindex.com/v1/hashprice/current",
 )
 _BLOCKCHAIN_STATS = "https://api.blockchain.info/stats"
+
+_KRAKEN_ETH_SYMBOL = "PF_ETHUSD"
+_HL_ETH_COIN = "ETH"
+_GATE_ETH_CONTRACT = "ETH_USDT"
 
 _BLOCK_REWARD_BTC = 3.125
 _BLOCKS_PER_DAY = 144
@@ -53,6 +66,7 @@ class FundingSnapshot:
     min_7d_pct: float | None
     max_7d_pct: float | None
     source: str = "binance"
+    interval_note: str = "8h"
 
 
 @dataclass
@@ -72,7 +86,17 @@ class MinerBreakevenSnapshot:
 
 
 def _get_json(url: str, params: dict[str, Any] | None = None, timeout: float = 20.0) -> Any:
-    response = requests.get(url, params=params, timeout=timeout)
+    response = requests.get(
+        url, params=params, timeout=timeout, headers=_HTTP_HEADERS
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _post_json(url: str, body: dict[str, Any], timeout: float = 20.0) -> Any:
+    response = requests.post(
+        url, json=body, timeout=timeout, headers=_HTTP_HEADERS
+    )
     response.raise_for_status()
     return response.json()
 
@@ -86,6 +110,19 @@ def _first_success(fetchers: list[Callable[[], T]], label: str) -> T:
             errors.append(str(exc))
             logger.warning("%s fetcher failed: %s", label, exc)
     raise RuntimeError(f"All {label} fetchers failed: {'; '.join(errors)}")
+
+
+def _rate_stats(rates: list[float]) -> tuple[float | None, float | None, float | None]:
+    if not rates:
+        return None, None, None
+    return sum(rates) / len(rates), min(rates), max(rates)
+
+
+def _to_pct_rate(value: float) -> float:
+    """Normalize a decimal funding rate to percent."""
+    if abs(value) < 0.05:
+        return value * 100.0
+    return value
 
 
 def _spot_volume_from_h1() -> SpotVolume:
@@ -103,6 +140,81 @@ def _spot_volume_from_h1() -> SpotVolume:
 
 def fetch_spot_volume() -> SpotVolume:
     return get_or_fetch("spot_volume_eth", _spot_volume_from_h1)
+
+
+def _kraken_eth_ticker() -> dict[str, Any]:
+    data = _get_json(f"{_KRAKEN_FUTURES}/tickers", {"symbol": _KRAKEN_ETH_SYMBOL})
+    tickers = data.get("tickers") or []
+    for row in tickers:
+        if str(row.get("symbol", "")).upper() == _KRAKEN_ETH_SYMBOL:
+            return row
+    if tickers:
+        return tickers[0]
+    raise RuntimeError("Kraken PF_ETHUSD ticker not found")
+
+
+def _kraken_funding_history() -> list[float]:
+    data = _get_json(
+        f"{_KRAKEN_FUTURES}/historicalfundingrates",
+        {"symbol": _KRAKEN_ETH_SYMBOL},
+    )
+    rows = data.get("rates") or data.get("fundingRates") or []
+    rates: list[float] = []
+    for row in rows[-21:]:
+        raw = row.get("relativeFundingRate")
+        if raw is None:
+            raw = row.get("fundingRate")
+        if raw is not None:
+            rates.append(_to_pct_rate(float(raw)))
+    return rates
+
+
+def _hyperliquid_eth_ctx() -> dict[str, Any]:
+    payload = _post_json(_HYPERLIQUID, {"type": "metaAndAssetCtxs"})
+    if not isinstance(payload, list) or len(payload) < 2:
+        raise RuntimeError("Unexpected Hyperliquid metaAndAssetCtxs payload")
+    meta, contexts = payload[0], payload[1]
+    universe = meta.get("universe") or []
+    for idx, asset in enumerate(universe):
+        if str(asset.get("name", "")).upper() == _HL_ETH_COIN:
+            return contexts[idx]
+    raise RuntimeError("ETH not found on Hyperliquid")
+
+
+def _hyperliquid_funding_history() -> list[float]:
+    start_ms = int((time.time() - 7 * 86400) * 1000)
+    rows = _post_json(
+        _HYPERLIQUID,
+        {"type": "fundingHistory", "coin": _HL_ETH_COIN, "startTime": start_ms},
+    )
+    rates: list[float] = []
+    for row in rows[-21:]:
+        raw = row.get("fundingRate")
+        if raw is not None:
+            rates.append(_to_pct_rate(float(raw)))
+    return rates
+
+
+def _perp_volume_hyperliquid() -> PerpVolume:
+    ctx = _hyperliquid_eth_ctx()
+    volume = float(ctx.get("dayNtlVlm") or 0)
+    return PerpVolume(symbol="ETH-PERP", volume_24h_quote=volume, source="hyperliquid")
+
+
+def _perp_volume_kraken() -> PerpVolume:
+    row = _kraken_eth_ticker()
+    volume = float(row.get("volumeQuote") or row.get("volQuote") or 0)
+    return PerpVolume(symbol=_KRAKEN_ETH_SYMBOL, volume_24h_quote=volume, source="kraken")
+
+
+def _perp_volume_gate() -> PerpVolume:
+    data = _get_json(f"{_GATE_FUTURES}/tickers", {"contract": _GATE_ETH_CONTRACT})
+    if isinstance(data, list):
+        row = data[0] if data else {}
+    else:
+        row = data
+    volume = float(row.get("volume_24h_quote") or row.get("volume_24h_settle") or 0)
+    return PerpVolume(symbol=_GATE_ETH_CONTRACT, volume_24h_quote=volume, source="gate")
 
 
 def _perp_volume_binance(symbol: str = "ETHUSDT") -> PerpVolume:
@@ -130,11 +242,70 @@ def _perp_volume_bybit(symbol: str = "ETHUSDT") -> PerpVolume:
 def fetch_perp_volume(symbol: str = "ETHUSDT") -> PerpVolume:
     def _fetch() -> PerpVolume:
         return _first_success(
-            [lambda: _perp_volume_binance(symbol), lambda: _perp_volume_bybit(symbol)],
+            [
+                _perp_volume_hyperliquid,
+                _perp_volume_kraken,
+                _perp_volume_gate,
+                lambda: _perp_volume_binance(symbol),
+                lambda: _perp_volume_bybit(symbol),
+            ],
             "perp_volume",
         )
 
     return get_or_fetch(f"perp_volume_{symbol}", _fetch)
+
+
+def _funding_hyperliquid() -> FundingSnapshot:
+    ctx = _hyperliquid_eth_ctx()
+    current = _to_pct_rate(float(ctx.get("funding") or 0))
+    rates = _hyperliquid_funding_history()
+    avg_7d, min_7d, max_7d = _rate_stats(rates)
+    return FundingSnapshot(
+        symbol="ETH-PERP",
+        current_rate_pct=current,
+        next_funding_time=None,
+        avg_7d_pct=avg_7d,
+        min_7d_pct=min_7d,
+        max_7d_pct=max_7d,
+        source="hyperliquid",
+        interval_note="1h",
+    )
+
+
+def _funding_kraken() -> FundingSnapshot:
+    row = _kraken_eth_ticker()
+    raw = row.get("fundingRate")
+    if raw is None:
+        raw = row.get("fundingRatePrediction")
+    current = _to_pct_rate(float(raw or 0))
+    rates = _kraken_funding_history()
+    avg_7d, min_7d, max_7d = _rate_stats(rates)
+    return FundingSnapshot(
+        symbol=_KRAKEN_ETH_SYMBOL,
+        current_rate_pct=current,
+        next_funding_time=str(row.get("nextFundingRateTime") or "") or None,
+        avg_7d_pct=avg_7d,
+        min_7d_pct=min_7d,
+        max_7d_pct=max_7d,
+        source="kraken",
+        interval_note="1h",
+    )
+
+
+def _funding_gate() -> FundingSnapshot:
+    data = _get_json(f"{_GATE_FUTURES}/tickers", {"contract": _GATE_ETH_CONTRACT})
+    row = data[0] if isinstance(data, list) and data else data
+    current = _to_pct_rate(float(row.get("funding_rate") or 0))
+    return FundingSnapshot(
+        symbol=_GATE_ETH_CONTRACT,
+        current_rate_pct=current,
+        next_funding_time=None,
+        avg_7d_pct=None,
+        min_7d_pct=None,
+        max_7d_pct=None,
+        source="gate",
+        interval_note="8h",
+    )
 
 
 def _funding_binance(symbol: str = "ETHUSDT") -> FundingSnapshot:
@@ -146,14 +317,16 @@ def _funding_binance(symbol: str = "ETHUSDT") -> FundingSnapshot:
         {"symbol": symbol, "limit": 21},
     )
     rates = [float(row.get("fundingRate", 0) or 0) * 100.0 for row in history]
+    avg_7d, min_7d, max_7d = _rate_stats(rates)
     return FundingSnapshot(
         symbol=symbol,
         current_rate_pct=current,
         next_funding_time=str(next_time) if next_time else None,
-        avg_7d_pct=sum(rates) / len(rates) if rates else None,
-        min_7d_pct=min(rates) if rates else None,
-        max_7d_pct=max(rates) if rates else None,
+        avg_7d_pct=avg_7d,
+        min_7d_pct=min_7d,
+        max_7d_pct=max_7d,
         source="binance",
+        interval_note="8h",
     )
 
 
@@ -175,21 +348,29 @@ def _funding_bybit(symbol: str = "ETHUSDT") -> FundingSnapshot:
     )
     hist_rows = (history.get("result") or {}).get("list") or []
     rates = [float(r.get("fundingRate", 0) or 0) * 100.0 for r in hist_rows]
+    avg_7d, min_7d, max_7d = _rate_stats(rates)
     return FundingSnapshot(
         symbol=symbol,
         current_rate_pct=current,
         next_funding_time=str(next_time) if next_time else None,
-        avg_7d_pct=sum(rates) / len(rates) if rates else None,
-        min_7d_pct=min(rates) if rates else None,
-        max_7d_pct=max(rates) if rates else None,
+        avg_7d_pct=avg_7d,
+        min_7d_pct=min_7d,
+        max_7d_pct=max_7d,
         source="bybit",
+        interval_note="8h",
     )
 
 
 def fetch_funding(symbol: str = "ETHUSDT") -> FundingSnapshot:
     def _fetch() -> FundingSnapshot:
         return _first_success(
-            [lambda: _funding_binance(symbol), lambda: _funding_bybit(symbol)],
+            [
+                _funding_hyperliquid,
+                _funding_kraken,
+                _funding_gate,
+                lambda: _funding_binance(symbol),
+                lambda: _funding_bybit(symbol),
+            ],
             "funding",
         )
 
