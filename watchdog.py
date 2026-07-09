@@ -31,6 +31,9 @@ from patterns.order_block import (
     OrderBlock,
     fib_level,
     fib_zone_bounds,
+    near_fib_level,
+    order_block_ref,
+    price_in_full_ob,
     price_in_ob,
     zones_overlap,
 )
@@ -55,6 +58,9 @@ class WatchdogTrigger:
     priority: int
     use_sfp_tp: bool = False
     sfp_event: SFPEvent | None = None
+    deploy_pct: float | None = None
+    entry_tranche: str | None = None
+    stop_override: float | None = None
 
 
 def _now_iso() -> str:
@@ -101,6 +107,69 @@ def _obs_in_fib(ctx: MarketContext, direction: Direction) -> list[OrderBlock]:
     return sorted(matches, key=lambda ob: ob.displacement_ts, reverse=True)
 
 
+def _tranche_filled(positions: list[dict], ob_ref: str, tranche: str) -> bool:
+    for pos in positions:
+        if str(pos.get("order_block_ref") or "") != ob_ref:
+            continue
+        if tranche in (pos.get("entry_tranches") or []):
+            return True
+    return False
+
+
+def _match_ob_by_ref(order_blocks: list[OrderBlock], ref: str) -> OrderBlock | None:
+    for ob in order_blocks:
+        if order_block_ref(ob) == ref:
+            return ob
+    return None
+
+
+def _append_tranche_triggers(
+    triggers: list[WatchdogTrigger],
+    *,
+    ctx: MarketContext,
+    ob: OrderBlock,
+    direction: Direction,
+    positions: list[dict],
+    allows: bool,
+) -> None:
+    if not allows:
+        return
+    ref = order_block_ref(ob)
+    pairs = (
+        (bot_config.ENTRY_FIB_TRANCHE_1, "0.25", bot_config.ENTRY_TRANCHE_DEPLOY_PCT),
+        (bot_config.ENTRY_FIB_TRANCHE_2, "0.50", bot_config.ENTRY_TRANCHE_DEPLOY_PCT),
+    )
+    for fib_mark, tranche, deploy_pct in pairs:
+        if _tranche_filled(positions, ref, tranche):
+            continue
+        if tranche == "0.50" and not _tranche_filled(positions, ref, "0.25"):
+            # Second half of the base position — require first tranche on this OB.
+            if not any(
+                str(p.get("order_block_ref") or "") == ref
+                for p in positions
+                if str(p.get("side")) == ("long" if direction == "bullish" else "short")
+            ):
+                continue
+        if not near_fib_level(ctx.spot, direction, ob.low, ob.high, fib_mark):
+            continue
+        side = "long" if direction == "bullish" else "short"
+        triggers.append(
+            WatchdogTrigger(
+                name=f"h1_ob_fib_{side}",
+                direction=direction,
+                ob=ob,
+                reason=(
+                    f"Price at H1 OB fib {tranche} tranche ({fib_level(direction, ob.low, ob.high, fib_mark):,.2f}) "
+                    f"with aligned HTF structure"
+                ),
+                priority=70,
+                deploy_pct=deploy_pct,
+                entry_tranche=tranche,
+            )
+        )
+        break
+
+
 def _latest_h1_bar_ts(h1_bars: list[dict]) -> str | None:
     if not h1_bars:
         return None
@@ -123,9 +192,53 @@ def _fresh_h1_sfp(ctx: MarketContext, h1_bars: list[dict]) -> SFPEvent | None:
     return None
 
 
-def evaluate_triggers(ctx: MarketContext, h1_bars: list[dict]) -> list[WatchdogTrigger]:
+def evaluate_scale_in(
+    ctx: MarketContext,
+    positions: list[dict],
+) -> WatchdogTrigger | None:
+    """0.718 fib scale-in: adds another TRADE_DEPLOY_PCT to an existing OB position."""
+    for pos in positions:
+        ref = str(pos.get("order_block_ref") or "")
+        if not ref:
+            continue
+        tranches = pos.get("entry_tranches") or []
+        if "0.718" in tranches:
+            continue
+        ob = _match_ob_by_ref(ctx.order_blocks, ref)
+        if ob is None:
+            continue
+        side = str(pos.get("side") or "")
+        if (side == "long" and ob.direction != "bullish") or (
+            side == "short" and ob.direction != "bearish"
+        ):
+            continue
+        if not near_fib_level(ctx.spot, ob.direction, ob.low, ob.high, bot_config.ADD_FIB_LEVEL):
+            continue
+        add_level = fib_level(ob.direction, ob.low, ob.high, bot_config.ADD_FIB_LEVEL)
+        return WatchdogTrigger(
+            name="h1_ob_fib_add",
+            direction=ob.direction,
+            ob=ob,
+            reason=(
+                f"Scale-in at H1 OB fib 0.718 ({add_level:,.2f}) — "
+                f"adds {bot_config.ADD_DEPLOY_PCT:.0%} notional to existing position"
+            ),
+            priority=95,
+            deploy_pct=bot_config.ADD_DEPLOY_PCT,
+            entry_tranche="0.718",
+        )
+    return None
+
+
+def evaluate_triggers(
+    ctx: MarketContext,
+    h1_bars: list[dict],
+    *,
+    positions: list[dict] | None = None,
+) -> list[WatchdogTrigger]:
     """Return actionable triggers sorted by priority (highest first)."""
     triggers: list[WatchdogTrigger] = []
+    open_positions = positions or []
 
     if "short_trigger_retest" in ctx.setup_tags:
         for ob in _obs_in_fib(ctx, "bearish"):
@@ -146,6 +259,66 @@ def evaluate_triggers(ctx: MarketContext, h1_bars: list[dict]) -> list[WatchdogT
     sfp = _fresh_h1_sfp(ctx, h1_bars)
     if sfp is not None:
         direction: Direction = sfp.direction
+        for ob in ctx.order_blocks:
+            if ob.direction != direction:
+                continue
+            if direction == "bullish":
+                if ctx.spot <= sfp.swept_level:
+                    continue
+                if not price_in_full_ob(ctx.spot, ob):
+                    continue
+                if price_in_ob(ctx.spot, ob):
+                    continue
+                if not _htf_allows_long(ctx):
+                    continue
+                stop = round(sfp.swept_level * (1 - SL_BUFFER_PCT), 2)
+                triggers.append(
+                    WatchdogTrigger(
+                        name="h1_sfp_sweep_reversal",
+                        direction="bullish",
+                        ob=ob,
+                        reason=(
+                            f"Bullish H1 SFP sweep-reversal: reclaimed above "
+                            f"{sfp.swept_level:,.2f} inside H1 OB"
+                        ),
+                        priority=88,
+                        sfp_event=sfp,
+                        stop_override=stop,
+                        deploy_pct=bot_config.TRADE_DEPLOY_PCT,
+                        entry_tranche="sweep",
+                    )
+                )
+                break
+            else:
+                if ctx.spot >= sfp.swept_level:
+                    continue
+                if not price_in_full_ob(ctx.spot, ob):
+                    continue
+                if price_in_ob(ctx.spot, ob):
+                    continue
+                if not _htf_allows_short(ctx):
+                    continue
+                stop = round(sfp.swept_level * (1 + SL_BUFFER_PCT), 2)
+                triggers.append(
+                    WatchdogTrigger(
+                        name="h1_sfp_sweep_reversal",
+                        direction="bearish",
+                        ob=ob,
+                        reason=(
+                            f"Bearish H1 SFP sweep-reversal: reclaimed below "
+                            f"{sfp.swept_level:,.2f} inside H1 OB"
+                        ),
+                        priority=88,
+                        sfp_event=sfp,
+                        stop_override=stop,
+                        deploy_pct=bot_config.TRADE_DEPLOY_PCT,
+                        entry_tranche="sweep",
+                    )
+                )
+                break
+
+    if sfp is not None:
+        direction = sfp.direction
         for ob in _obs_in_fib(ctx, direction):
             triggers.append(
                 WatchdogTrigger(
@@ -154,44 +327,46 @@ def evaluate_triggers(ctx: MarketContext, h1_bars: list[dict]) -> list[WatchdogT
                     ob=ob,
                     reason=(
                         f"H1 {direction} SFP confirmed on latest bar close @ "
-                        f"{sfp.swept_level:,.2f} with price in H1 OB fib zone"
+                        f"{sfp.swept_level:,.2f} with price in H1 OB entry band"
                     ),
                     priority=90,
                     use_sfp_tp=True,
                     sfp_event=sfp,
+                    deploy_pct=bot_config.TRADE_DEPLOY_PCT,
+                    entry_tranche="sfp",
                 )
             )
             break
 
-    if "h1_ob_bullish_in_fib" in ctx.setup_tags and _htf_allows_long(ctx):
-        for ob in _obs_in_fib(ctx, "bullish"):
-            triggers.append(
-                WatchdogTrigger(
-                    name="h1_ob_fib_long",
-                    direction="bullish",
-                    ob=ob,
-                    reason=(
-                        "Price in bullish H1 OB fib 0.618–0.786 with aligned HTF structure"
-                    ),
-                    priority=70,
-                )
+    if "h1_ob_bullish_in_fib" in ctx.setup_tags:
+        for ob in sorted(
+            [o for o in ctx.order_blocks if o.direction == "bullish"],
+            key=lambda o: o.displacement_ts,
+            reverse=True,
+        ):
+            _append_tranche_triggers(
+                triggers,
+                ctx=ctx,
+                ob=ob,
+                direction="bullish",
+                positions=open_positions,
+                allows=_htf_allows_long(ctx),
             )
-            break
 
-    if "h1_ob_bearish_in_fib" in ctx.setup_tags and _htf_allows_short(ctx):
-        for ob in _obs_in_fib(ctx, "bearish"):
-            triggers.append(
-                WatchdogTrigger(
-                    name="h1_ob_fib_short",
-                    direction="bearish",
-                    ob=ob,
-                    reason=(
-                        "Price in bearish H1 OB fib 0.618–0.786 with aligned HTF structure"
-                    ),
-                    priority=70,
-                )
+    if "h1_ob_bearish_in_fib" in ctx.setup_tags:
+        for ob in sorted(
+            [o for o in ctx.order_blocks if o.direction == "bearish"],
+            key=lambda o: o.displacement_ts,
+            reverse=True,
+        ):
+            _append_tranche_triggers(
+                triggers,
+                ctx=ctx,
+                ob=ob,
+                direction="bearish",
+                positions=open_positions,
+                allows=_htf_allows_short(ctx),
             )
-            break
 
     triggers.sort(key=lambda t: t.priority, reverse=True)
     return triggers
@@ -355,6 +530,9 @@ def _build_rationale(
     entry: float,
 ) -> str:
     z_low, z_high = fib_zone_bounds(ob.direction, ob.low, ob.high)
+    t25 = fib_level(ob.direction, ob.low, ob.high, bot_config.ENTRY_FIB_TRANCHE_1)
+    t50 = fib_level(ob.direction, ob.low, ob.high, bot_config.ENTRY_FIB_TRANCHE_2)
+    t718 = fib_level(ob.direction, ob.low, ob.high, bot_config.ADD_FIB_LEVEL)
     htf_lines = _htf_context_lines(ctx, ob)
     body_parts = [
         f"[Watchdog — {trigger.name}]",
@@ -362,8 +540,9 @@ def _build_rationale(
         f"{trigger.reason}.",
         "",
         (
-            f"Entry {entry:,.2f} inside H1 OB fib zone ({z_low:,.2f}-{z_high:,.2f}); "
-            f"block bounds {ob.low:,.2f}-{ob.high:,.2f}."
+            f"Entry {entry:,.2f}; H1 OB {ob.low:,.2f}-{ob.high:,.2f}; "
+            f"entry band 0.25-0.50: {z_low:,.2f}-{z_high:,.2f}; "
+            f"tranches @ {t25:,.2f}/{t50:,.2f}; add @ {t718:,.2f}."
         ),
     ]
     if htf_lines:
@@ -407,17 +586,26 @@ def build_suggestion(
     h12_bars: list[dict],
 ) -> Suggestion:
     ob = trigger.ob
-    entry = round(ctx.spot, 2)
-    if not price_in_ob(entry, ob):
-        fib_entry = fib_level(ob.direction, ob.low, ob.high, 0.702)
-        entry = fib_entry
+    if trigger.entry_tranche in ("0.25", "0.50", "0.718"):
+        entry = fib_level(ob.direction, ob.low, ob.high, float(trigger.entry_tranche))
+    else:
+        entry = round(ctx.spot, 2)
 
-    stop_loss, take_profits = _stop_and_targets(
-        entry=entry,
-        direction=trigger.direction,
-        h12_bars=h12_bars,
-        use_sfp_tp=trigger.use_sfp_tp,
-    )
+    if trigger.stop_override is not None:
+        stop_loss = trigger.stop_override
+        _, take_profits = _stop_and_targets(
+            entry=entry,
+            direction=trigger.direction,
+            h12_bars=h12_bars,
+            use_sfp_tp=False,
+        )
+    else:
+        stop_loss, take_profits = _stop_and_targets(
+            entry=entry,
+            direction=trigger.direction,
+            h12_bars=h12_bars,
+            use_sfp_tp=trigger.use_sfp_tp,
+        )
     take_profits = _ensure_min_rr(entry, stop_loss, take_profits, trigger.direction)
     action = "spot_buy" if trigger.direction == "bullish" else "spot_sell"
 
@@ -433,8 +621,15 @@ def build_suggestion(
         "structure_chart": "H12",
         "entry_chart": "H1",
         "order_block": _order_block_dict(ob),
+        "deploy_pct": trigger.deploy_pct,
+        "entry_tranche": trigger.entry_tranche,
+        "order_block_ref": order_block_ref(ob),
     }
-    return analyze.validate_suggestion(payload, market_context=ctx)
+    suggestion = analyze.validate_suggestion(payload, market_context=ctx)
+    suggestion.deploy_pct = trigger.deploy_pct
+    suggestion.entry_tranche = trigger.entry_tranche
+    suggestion.order_block_ref = order_block_ref(ob)
+    return suggestion
 
 
 def _is_on_cooldown(trigger_key: str) -> bool:
@@ -487,7 +682,12 @@ def run_watchdog() -> Suggestion | None:
         logger.exception("Watchdog failed to load market data")
         return None
 
-    triggers = evaluate_triggers(ctx, data["H1"])
+    open_positions = paper.get_open_positions(live_spot)
+    triggers = evaluate_triggers(ctx, data["H1"], positions=open_positions)
+    scale_in = evaluate_scale_in(ctx, open_positions)
+    if scale_in is not None:
+        triggers = [scale_in] + triggers
+
     if not triggers:
         logger.debug("Watchdog scan: no triggers (spot=%.2f)", live_spot)
         return None

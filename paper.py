@@ -145,6 +145,35 @@ def _ensure_trade_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE paper_trades ADD COLUMN close_reason TEXT")
 
 
+def _ensure_position_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(paper_positions)").fetchall()}
+    if "order_block_ref" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN order_block_ref TEXT")
+    if "entry_tranches" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN entry_tranches TEXT")
+
+
+def _parse_entry_tranches(raw: str | list | None) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    return [str(x) for x in values]
+
+
+def _merge_entry_tranches(existing: list[str], new_tranche: str | None) -> list[str]:
+    if not new_tranche:
+        return existing
+    merged = list(existing)
+    if new_tranche not in merged:
+        merged.append(new_tranche)
+    return merged
+
+
 def _ensure_state_epoch_columns(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(paper_state)").fetchall()}
     if "epoch_started_at" not in cols:
@@ -216,6 +245,7 @@ def init_db() -> None:
         _ensure_legacy_columns(conn)
         _ensure_trade_columns(conn)
         _ensure_state_epoch_columns(conn)
+        _ensure_position_columns(conn)
         row = conn.execute("SELECT id FROM paper_state WHERE id = 1").fetchone()
         if row is None:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -432,13 +462,19 @@ def _add_to_net_position(
     new_avg = (old_qty * old_entry + add_qty * entry) / new_qty
     side = str(position["side"])
     pos_id = int(position["id"])
+    tranches = _merge_entry_tranches(
+        _parse_entry_tranches(position.get("entry_tranches")),
+        suggestion.entry_tranche,
+    )
 
     cash -= notional
     conn.execute(
         """
         UPDATE paper_positions
         SET eth_qty = ?, avg_entry = ?, stop_loss = ?, take_profits = ?,
-            risk_reward = ?, suggested_size = ?, action = ?, open_cycle_id = ?
+            risk_reward = ?, suggested_size = ?, action = ?, open_cycle_id = ?,
+            order_block_ref = COALESCE(?, order_block_ref),
+            entry_tranches = ?
         WHERE id = ?
         """,
         (
@@ -450,6 +486,8 @@ def _add_to_net_position(
             suggestion.size,
             suggestion.action,
             cycle_id,
+            suggestion.order_block_ref,
+            json.dumps(tranches) if tranches else None,
             pos_id,
         ),
     )
@@ -542,6 +580,7 @@ def _parse_take_profits(raw: str | list | None) -> list[float]:
 def _row_to_position(row: sqlite3.Row | dict) -> dict:
     pos = dict(row)
     pos["take_profits"] = _parse_take_profits(pos.get("take_profits"))
+    pos["entry_tranches"] = _parse_entry_tranches(pos.get("entry_tranches"))
     return pos
 
 
@@ -1005,12 +1044,14 @@ def _open_position(
     cash -= notional
     side = "long" if suggestion.action in LONG_ACTIONS else "short"
     opened_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    tranches = _merge_entry_tranches([], suggestion.entry_tranche)
     cursor = conn.execute(
         """
         INSERT INTO paper_positions (
             open_cycle_id, opened_at, side, action, eth_qty, avg_entry,
-            stop_loss, take_profits, risk_reward, suggested_size, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+            stop_loss, take_profits, risk_reward, suggested_size, status,
+            order_block_ref, entry_tranches
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
         """,
         (
             cycle_id,
@@ -1023,6 +1064,8 @@ def _open_position(
             json.dumps(suggestion.take_profits),
             suggestion.risk_reward,
             suggestion.size,
+            suggestion.order_block_ref,
+            json.dumps(tranches) if tranches else None,
         ),
     )
     pos_id = int(cursor.lastrowid)

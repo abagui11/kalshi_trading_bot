@@ -63,8 +63,9 @@ def compute_eth_qty(
     cash: float | None = None,
     portfolio_value: float | None = None,
     equity_usd: float | None = None,
+    deploy_pct: float | None = None,
 ) -> float:
-    """Fixed-fraction sizing: deploy ``TRADE_DEPLOY_PCT`` of live equity as notional.
+    """Fixed-fraction sizing: deploy ``deploy_pct`` (default ``TRADE_DEPLOY_PCT``) of equity.
 
     Stop distance does not affect size (R/R is validated separately). The result
     is capped by available cash and clamped to the MIN/MAX ETH guardrails.
@@ -79,7 +80,8 @@ def compute_eth_qty(
     if equity <= 0 or available <= 0:
         return 0.0
 
-    notional = min(equity * bot_config.TRADE_DEPLOY_PCT, available)
+    pct = deploy_pct if deploy_pct is not None else bot_config.TRADE_DEPLOY_PCT
+    notional = min(equity * pct, available)
     if notional <= 0:
         return 0.0
 
@@ -168,6 +170,7 @@ def validate_trade_risk(
         stop_loss,
         cash=available_cash,
         equity_usd=equity,
+        deploy_pct=suggestion.deploy_pct,
     )
     if qty <= 0:
         raise ValueError(

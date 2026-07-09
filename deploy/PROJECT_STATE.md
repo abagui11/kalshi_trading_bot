@@ -139,7 +139,8 @@ flowchart TD
     CTX2 --> TRG[evaluate_triggers]
     TRG --> T1[short_trigger_retest]
     TRG --> T2[h1_sfp_close on latest bar]
-    TRG --> T3[h1_ob_fib long / short]
+    TRG --> T3[h1_ob_fib tranches 0.25 / 0.50 + 0.718 add]
+    TRG --> T4[h1_sfp_sweep_reversal]
 
     T1 --> CD{cooldown?}
     T2 --> CD
@@ -241,7 +242,10 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 | `RUN_LLM_CRITIC_PRE_BROADCAST` | `True` | run LLM critic in refine loop |
 | `MAX_REFINE_PASSES` | `3` | audit retry budget before downgrade |
 | `MAX_OPEN_TRADES` | `20` | paper FIFO cap |
-| `TRADE_DEPLOY_PCT` | `0.25` | fixed fraction of **live paper equity** deployed as notional per trade (R/R unaffected) |
+| `ENTRY_FIB_LOW` / `ENTRY_FIB_HIGH` | `0.25` / `0.50` | H1 OB entry band; watchdog tranches at each level |
+| `ADD_FIB_LEVEL` | `0.718` | scale-in adds another `TRADE_DEPLOY_PCT` (1.25× max base exposure) |
+| `ENTRY_TRANCHE_DEPLOY_PCT` | `0.125` | per-tranche deploy (half of `TRADE_DEPLOY_PCT`) |
+| `TRADE_DEPLOY_PCT` | `0.25` | fixed fraction of **live paper equity** deployed as notional per full idea (R/R unaffected) |
 | `MIN_ETH_QTY` / `MAX_ETH_QTY` | `0.25` / `2.0` | paper size guardrails after fixed-fraction sizing |
 | `OB_MIN_WIDTH_PCT` | `1.25` | minimum OB zone width (% of mid price; H1 rule, all TFs) |
 | `PAPER_EPOCH_LABEL` | `"5k_usd"` | dashboard epoch label |
@@ -268,6 +272,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-09 | Watchdog staged fib entries (12.5% @ 0.25 + 12.5% @ 0.50), 0.718 scale-in (+25%), and `h1_sfp_sweep_reversal` with stop at swept level. Entry band changed from 0.618–0.786 to 0.25–0.50 across guide, validation, and charts. |
 | 2026-07-08 | Position sizing switched from 1% risk-based to fixed-fraction deployment (`TRADE_DEPLOY_PCT=0.25` of live paper equity); removed risk-capacity feasibility gate; `MAX_ETH_QTY` raised to `2.0`. R/R, stop, and TP logic unchanged. |
 | 2026-07-07 | OB minimum width filter (`OB_MIN_WIDTH_PCT=1.25`): H1 + H12 detection and analyze validation |
 | 2026-07-07 | Macro headline layer: RSS poll, webhook ingest, keyword→Haiku classify, pulse advisories, watchdog soft gates, dashboard macro monitor |

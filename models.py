@@ -19,6 +19,9 @@ class Suggestion:
   decision_charts: list[str] = field(default_factory=list)
   structure_chart: str | None = None
   entry_chart: str | None = None
+  deploy_pct: float | None = None  # override TRADE_DEPLOY_PCT for tranche / add sizing
+  entry_tranche: str | None = None  # e.g. "0.25", "0.50", "0.718", "sweep"
+  order_block_ref: str | None = None  # links scale-ins to the same H1 OB
 
   @classmethod
   def no_trade(cls, rationale: str = "No setup") -> Suggestion:
@@ -39,6 +42,7 @@ class Suggestion:
     decision_charts = [str(x).upper() for x in raw_charts if x]
     structure = data.get("structure_chart")
     entry = data.get("entry_chart")
+    deploy_raw = data.get("deploy_pct")
     return cls(
       action=str(data.get("action", "no_trade")),
       size=float(data.get("size", 0) or 0),
@@ -51,4 +55,7 @@ class Suggestion:
       decision_charts=decision_charts,
       structure_chart=str(structure).upper() if structure else None,
       entry_chart=str(entry).upper() if entry else None,
+      deploy_pct=float(deploy_raw) if deploy_raw is not None else None,
+      entry_tranche=str(data["entry_tranche"]) if data.get("entry_tranche") else None,
+      order_block_ref=str(data["order_block_ref"]) if data.get("order_block_ref") else None,
     )

@@ -18,6 +18,16 @@ RUN_LLM_CRITIC_PRE_BROADCAST = True
 # take-profit logic are unaffected — this only sets trade size.
 TRADE_DEPLOY_PCT = 0.25
 
+# H1 OB fib entry band (bullish: from block low; bearish: from block high).
+ENTRY_FIB_LOW = 0.25
+ENTRY_FIB_HIGH = 0.50
+ENTRY_FIB_TRANCHE_1 = 0.25  # 50% of base deploy at this level
+ENTRY_FIB_TRANCHE_2 = 0.50  # remaining 50% of base deploy
+ADD_FIB_LEVEL = 0.718  # scale-in adds another full TRADE_DEPLOY_PCT
+ENTRY_TRANCHE_DEPLOY_PCT = TRADE_DEPLOY_PCT / 2  # 12.5% per tranche
+ADD_DEPLOY_PCT = TRADE_DEPLOY_PCT  # +25% at 0.718 → 1.25× base exposure
+FIB_LEVEL_TOLERANCE_PCT = 0.004  # "near" a fib mark for intrabar watchdog
+
 # Paper position size guardrails (ETH), applied after fixed-fraction sizing.
 MIN_ETH_QTY = 0.25
 MAX_ETH_QTY = 2.0

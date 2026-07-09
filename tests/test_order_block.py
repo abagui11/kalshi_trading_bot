@@ -6,11 +6,13 @@ import pytest
 
 from patterns.order_block import (
     OrderBlock,
+    entry_valid_at_price,
     fib_level,
     fib_zone_bounds,
     find_matching_h1_ob,
     format_ob_with_fib,
     meets_min_ob_width,
+    near_fib_level,
     ob_width_pct,
     price_in_fib_zone,
     zones_overlap,
@@ -19,21 +21,26 @@ from patterns.order_block import (
 
 def test_bullish_fib_zone_bounds():
     z_low, z_high = fib_zone_bounds("bullish", 1554.47, 1586.51)
-    assert z_low == pytest.approx(1574.27, abs=0.02)
-    assert z_high == pytest.approx(1579.65, abs=0.02)
+    assert z_low == pytest.approx(1562.48, abs=0.02)
+    assert z_high == pytest.approx(1570.49, abs=0.02)
 
 
-def test_1569_not_in_h12_ob_fib_sweet_spot():
-    assert not price_in_fib_zone(1569.0, "bullish", 1554.47, 1586.51)
+def test_1569_inside_entry_band():
+    assert price_in_fib_zone(1569.0, "bullish", 1554.47, 1586.51)
 
 
-def test_1569_inside_full_ob_but_outside_fib():
-    assert 1554.47 <= 1569.0 <= 1586.51
-    assert not price_in_fib_zone(1569.0, "bullish", 1554.47, 1586.51)
+def test_1575_outside_entry_band():
+    assert 1554.47 <= 1575.0 <= 1586.51
+    assert not price_in_fib_zone(1575.0, "bullish", 1554.47, 1586.51)
 
 
-def test_fib_level_bullish_0618():
-    assert fib_level("bullish", 2380.0, 2420.0, 0.618) == pytest.approx(2404.72, abs=0.02)
+def test_fib_level_bullish_025():
+    assert fib_level("bullish", 2380.0, 2420.0, 0.25) == pytest.approx(2390.0, abs=0.02)
+
+
+def test_near_fib_level_tranche():
+    assert near_fib_level(2390.5, "bullish", 2380.0, 2420.0, 0.25)
+    assert entry_valid_at_price(2390.0, "bullish", 2380.0, 2420.0)
 
 
 def test_zones_overlap():
@@ -79,7 +86,7 @@ def test_format_ob_with_fib_includes_h1_label_context():
     )
     text = format_ob_with_fib(ob)
     assert "H1 OB" in text
-    assert "2,404.72" in text
+    assert "2,390.00" in text
 
 
 def test_ob_width_pct():

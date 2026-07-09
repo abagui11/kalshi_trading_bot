@@ -23,7 +23,7 @@ This is a high level framework for trading and can be used to trade on any timef
       1. Identify H12 OB (order blocks) & breakers
          1. Order block above current price = resistance
          2. Order block below current price = support
-         3. Use the fib retracement tool to determine the 0.618 - 0.786 retracement zone (this is the sweet spot)
+         3. Use the fib retracement tool: **entry band 0.25–0.50**, optional **0.718** scale-in (watchdog)
          4. A breaker is an order block that fails and is then retested (a special type of order block)
    3. Are there any SFPs (swing fail patterns)?
    4. Are there any FVGs (fair value gaps)?
@@ -38,11 +38,11 @@ This is a high level framework for trading and can be used to trade on any timef
 
 3. Repeat Step 2 but on the **H1** (1 hour) chart.
    1. Entries are decided based on H1 chart
-   2. Enter 0.5 units at 0.618 mark of **H1 OB** (not the H12 OB box).
-   3. Enter 0.5 units at 0.768 mark of **H1 OB**.
-      1. Can adjust based on strategy
+   2. **Staged fib entries (watchdog + paper):** deploy **12.5%** of equity at **0.25** fib of the H1 OB, then another **12.5%** at **0.50** fib (total **25%** base exposure).
+   3. **Scale-in:** if price reaches **0.718** fib on the same H1 OB, add another **25%** (max **1.25×** the base deploy on that idea).
    4. **H12 vs H1 OB:** Green/pink boxes labeled **H12 OB** on charts are HTF structure only. The `order_block` JSON field must reference a candle on the **H1** chart. If an H1 OB overlaps an H12 OB in price, say so explicitly — never call an H12 box an "H1 OB".
-   5. If price is inside an H12 OB but **outside** the H1 OB fib 0.618–0.786 zone, default **`no_trade`** (wait for H1 fib retest). Exception: deliberate HTF key-level entry per deviations below.
+   5. If price is inside an H12 OB but **outside** the H1 OB **0.25–0.50** entry band, default **`no_trade`** (wait for fib retest). Exception: deliberate HTF key-level entry per deviations below.
+   6. **Sweep-reversal (watchdog):** when a confirmed H1 SFP sweeps a swing and price **reclaims** inside the H1 OB (but outside the 0.25–0.50 band), the watchdog may enter with stop **below/above the swept level** — not the distant H12 swing.
 
 4. Identify TP (take profit) and SL (stop loss) and Calculate risk reward:
    1. Set SL 0.25% away from the closest HTF swing level (e.g., if long, SL would be a swing low)
@@ -120,7 +120,7 @@ When the H1 chart shows structure similar to this reference screenshot, the agen
 1. **Identify the 24h range** (example: 58.5–60.4 in the reference). State that the range exists in `rationale`, and flag again if price breaks above or below the range.
 2. **Identify ranging conditions** when price oscillates inside the 24h range without a clean trend.
 3. **Identify the potential order block** — use **H12 OB/BRKR boxes** on the marked charts when present; they are detected programmatically from H12 structure and cited for **HTF bias only**. For **entries**, use **H1 OBs** from programmatic context (`Detected H1 order blocks`) or infer on H1 using the same displacement rules.
-4. **Alert a potential short inside the H1 OB fib zone** when HTF/LTF structure aligns (e.g., bearish H1 OB retest in the 0.618–0.786 zone with R/R ≥ 1.0). Being inside an H12 OB alone is not sufficient for entry.
+4. **Alert a potential short inside the H1 OB entry band** when HTF/LTF structure aligns (e.g., bearish H1 OB retest in the **0.25–0.50** zone with R/R ≥ 1.0). Being inside an H12 OB alone is not sufficient for entry.
 
 **Deviations / Adjustments:**
 
@@ -196,7 +196,7 @@ Respond with **only** a JSON object — no markdown fences, no prose outside JSO
   "stop_loss": 2350.0,
   "take_profits": [2500.0, 2600.0, 2700.0],
   "risk_reward": 2.0,
-  "rationale": "H12 bullish HH/HL for bias. H1 OB 2380-2420 fib 0.618-0.786 entry. Weekly Open confluence.",
+  "rationale": "H12 bullish HH/HL for bias. H1 OB 2380-2420 fib 0.25-0.50 entry. Weekly Open confluence.",
   "decision_charts": ["H12", "H4", "H1"],
   "structure_chart": "H12",
   "entry_chart": "H1",
@@ -209,7 +209,7 @@ Respond with **only** a JSON object — no markdown fences, no prose outside JSO
 }
 ```
 
-`order_block` must be an **H1 OB** (timestamps on the H1 chart). Entry must fall inside that block's **0.618–0.786 fib zone** (example entry 2408 is inside 2404.72–2411.44). Do not copy H12 OB bounds into `order_block`.
+`order_block` must be an **H1 OB** (timestamps on the H1 chart). Entry must fall on fib **0.25** or **0.50** tranches or inside the **0.25–0.50** band (example entry 2395 inside 2390–2400). Do not copy H12 OB bounds into `order_block`.
 
 **No trade:**
 ```json
@@ -281,7 +281,7 @@ Use H12 OB/BRKR boxes for HTF bias. For LTF entries, use **H1 OBs** (labeled **H
 | Green/pink rectangle, label **H1 OB** | H1 order block detected programmatically — use for `order_block` JSON and fib entries |
 | No H1 OB label | No programmatic H1 OB in lookback — infer carefully or `no_trade` |
 
-Entry fib sweet spot (bullish): `low + span×0.618` to `low + span×0.786`. Programmatic context lists exact levels.
+Entry fib band (bullish): `low + span×0.25` to `low + span×0.50`. Scale-in at `0.718`. Programmatic context lists exact levels.
 
 ### Other reference lines
 
@@ -296,7 +296,7 @@ Up to two full-width charts per cycle when a trade is taken:
 
 1. **Structure chart** (`structure_chart` TF) — same overlays as marked charts (key levels + H12 OB/BRKR + swings). No rationale text on the image.
 2. **Entry chart** (`entry_chart` TF) — same overlays plus trade markup:
-   - **Gold box** + label `Fib 0.618–0.786`: entry sweet spot inside your chosen `order_block`
+   - **Gold box** + label `Fib 0.25–0.50`: entry band inside your chosen `order_block`
    - **Green dashed** line (left label): Entry
    - **Red solid** line (left label): Stop loss
    - **Blue dotted** lines (left labels): TP1, TP2, TP3

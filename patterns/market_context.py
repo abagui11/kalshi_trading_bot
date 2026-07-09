@@ -142,7 +142,7 @@ def _fib_position_label(spot: float, z_low: float, z_high: float) -> str:
 
 def _format_h12_zone_fib(zone: HTFZone) -> str:
     z_low, z_high = fib_zone_bounds(zone.direction, zone.low, zone.high)
-    return f"fib 0.618-0.786 inside zone: {z_low:,.2f}-{z_high:,.2f}"
+    return f"fib 0.25-0.50 entry band: {z_low:,.2f}-{z_high:,.2f}"
 
 
 def _h1_ob_overlaps_h12(ob: OrderBlock, htf_zones: list[HTFZone]) -> HTFZone | None:
@@ -311,7 +311,7 @@ def build_market_context(
                 else ""
             )
             alerts.append(
-                f"Price in {ob.direction} H1 OB fib zone {z_low:,.2f}-{z_high:,.2f}"
+                f"Price in {ob.direction} H1 OB entry band {z_low:,.2f}-{z_high:,.2f}"
                 f"{overlap} — potential {side} setup"
             )
             setup_tags.append(f"h1_ob_{ob.direction}_in_fib")
@@ -319,7 +319,7 @@ def build_market_context(
             fib_pos = _fib_position_label(spot, z_low, z_high)
             alerts.append(
                 f"Price inside {ob.direction} H1 OB ({ob.low:,.2f}-{ob.high:,.2f}) "
-                f"but {fib_pos} fib sweet spot ({z_low:,.2f}-{z_high:,.2f}) — wait for fib retest"
+                f"but {fib_pos} entry band ({z_low:,.2f}-{z_high:,.2f}) — wait for fib retest"
             )
             setup_tags.append(f"h1_ob_{ob.direction}_no_fib")
 
@@ -479,7 +479,7 @@ def build_market_context(
             "Decision rules:",
             "- H12 OB/BRKR boxes = HTF structure and bias in rationale. Never label them 'H1 OB'.",
             "- order_block JSON + entries = H1 OB only (from 'Detected H1 order blocks' above).",
-            "- Entry must be inside the H1 OB fib 0.618-0.786 zone unless action is no_trade.",
+            "- Entry must be on H1 OB fib tranches 0.25/0.50 or inside the 0.25–0.50 band unless action is no_trade.",
             "- If H1 OB overlaps an H12 OB, say 'H1 OB coincides with H12 OB' — do not conflate.",
             "- If only inside H12 OB (no H1 OB fib), default no_trade or wait for H1 fib retest.",
             "- If retest status (rolling 24h) is FILLED, do NOT say price has not reached the retest zone.",

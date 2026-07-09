@@ -14,7 +14,7 @@ def _trade_payload(**overrides):
     base = {
         "action": "spot_buy",
         "size": 0.5,
-        "entry": 2408.0,
+        "entry": 2395.0,
         "stop_loss": 2350.0,
         "take_profits": [2500.0],
         "risk_reward": 2.0,
@@ -34,7 +34,7 @@ def _trade_payload(**overrides):
 
 def test_validate_rejects_entry_outside_fib_zone():
     with pytest.raises(ValueError, match="outside H1 OB fib"):
-        _validate(_trade_payload(entry=2400.0))
+        _validate(_trade_payload(entry=2410.0))
 
 
 def test_validate_rejects_narrow_order_block():
@@ -100,11 +100,11 @@ def test_validate_accepts_matching_h1_ob_and_fib_entry():
         range_24h=None,
         is_ranging=False,
         range_break=None,
-        spot=2408.0,
+        spot=2395.0,
         zone_snapshot=None,
         setup_state=None,
         order_blocks=[h1_ob],
     )
     s = _validate(_trade_payload(), market_context=ctx)
     assert s.action == "spot_buy"
-    assert s.entry == 2408.0
+    assert s.entry == 2395.0

@@ -7,7 +7,13 @@ from typing import Literal
 
 import pandas as pd
 
-from bot_config import OB_MIN_WIDTH_PCT
+from bot_config import (
+    ADD_FIB_LEVEL,
+    ENTRY_FIB_HIGH,
+    ENTRY_FIB_LOW,
+    FIB_LEVEL_TOLERANCE_PCT,
+    OB_MIN_WIDTH_PCT,
+)
 from patterns.swing import Pivot, find_pivots
 
 Direction = Literal["bullish", "bearish"]
@@ -138,10 +144,10 @@ def fib_zone_bounds(
     direction: Direction,
     low: float,
     high: float,
-    fib_low: float = 0.618,
-    fib_high: float = 0.786,
+    fib_low: float = ENTRY_FIB_LOW,
+    fib_high: float = ENTRY_FIB_HIGH,
 ) -> tuple[float, float]:
-    """0.618–0.786 entry sweet spot inside an OB (bullish: from bottom; bearish: from top)."""
+    """Entry band inside an OB (default 0.25–0.50)."""
     span = high - low
     if span <= 0:
         return low, high
@@ -155,7 +161,7 @@ def fib_zone_bounds(
 
 
 def fib_level(direction: Direction, low: float, high: float, fib: float) -> float:
-    """Single fib mark inside an OB (e.g. 0.618 entry level for bullish demand)."""
+    """Single fib mark inside an OB."""
     span = high - low
     if span <= 0:
         return low
@@ -169,19 +175,68 @@ def price_in_fib_zone(
     direction: Direction,
     low: float,
     high: float,
-    fib_low: float = 0.618,
-    fib_high: float = 0.786,
-    tolerance_pct: float = 0.003,
+    fib_low: float = ENTRY_FIB_LOW,
+    fib_high: float = ENTRY_FIB_HIGH,
+    tolerance_pct: float = FIB_LEVEL_TOLERANCE_PCT,
 ) -> bool:
-    """True when price is inside the fib sweet spot (with small tolerance for rounding)."""
+    """True when price is inside the entry fib band (with tolerance)."""
     zone_low, zone_high = fib_zone_bounds(direction, low, high, fib_low, fib_high)
     pad = max(zone_high - zone_low, low * tolerance_pct, 1.0) * tolerance_pct
     return (zone_low - pad) <= price <= (zone_high + pad)
 
 
-def price_in_ob(price: float, ob: OrderBlock, fib_low: float = 0.618, fib_high: float = 0.786) -> bool:
-    """True when price sits in the OB discount/premium zone (fib slice of the block)."""
+def near_fib_level(
+    price: float,
+    direction: Direction,
+    low: float,
+    high: float,
+    fib: float,
+    tolerance_pct: float = FIB_LEVEL_TOLERANCE_PCT,
+) -> bool:
+    """True when price is near a single fib mark (for staged entries / adds)."""
+    level = fib_level(direction, low, high, fib)
+    pad = max(abs(level) * tolerance_pct, 1.0)
+    return abs(price - level) <= pad
+
+
+def price_in_ob(
+    price: float,
+    ob: OrderBlock,
+    fib_low: float = ENTRY_FIB_LOW,
+    fib_high: float = ENTRY_FIB_HIGH,
+) -> bool:
+    """True when price sits in the OB entry fib band."""
     return price_in_fib_zone(price, ob.direction, ob.low, ob.high, fib_low, fib_high)
+
+
+def price_in_full_ob(price: float, ob: OrderBlock) -> bool:
+    """True when price is anywhere inside the OB bounds (for sweep-reversal context)."""
+    return ob.low <= price <= ob.high
+
+
+def entry_valid_at_price(
+    price: float,
+    direction: Direction,
+    low: float,
+    high: float,
+    *,
+    allow_add_level: bool = False,
+) -> bool:
+    """Entry or scale-in price is on a configured fib mark or inside the entry band."""
+    if price_in_fib_zone(price, direction, low, high):
+        return True
+    if near_fib_level(price, direction, low, high, ENTRY_FIB_LOW):
+        return True
+    if near_fib_level(price, direction, low, high, ENTRY_FIB_HIGH):
+        return True
+    if allow_add_level and near_fib_level(price, direction, low, high, ADD_FIB_LEVEL):
+        return True
+    return False
+
+
+def order_block_ref(ob: OrderBlock) -> str:
+    """Stable key for tranche / scale-in tracking on a detected H1 OB."""
+    return f"{ob.direction}:{ob.displacement_ts}:{ob.low:.2f}:{ob.high:.2f}"
 
 
 def zones_overlap(
@@ -248,10 +303,14 @@ def find_matching_h1_ob(
 
 
 def format_ob_with_fib(ob: OrderBlock) -> str:
-    """Single-line summary with fib sweet spot for prompts."""
+    """Single-line summary with fib entry band for prompts."""
     z_low, z_high = fib_zone_bounds(ob.direction, ob.low, ob.high)
+    t1 = fib_level(ob.direction, ob.low, ob.high, ENTRY_FIB_LOW)
+    t2 = fib_level(ob.direction, ob.low, ob.high, ENTRY_FIB_HIGH)
+    add = fib_level(ob.direction, ob.low, ob.high, ADD_FIB_LEVEL)
     return (
         f"{ob.direction} H1 OB {ob.low:,.2f}-{ob.high:,.2f} "
         f"(candle {ob.start_ts[:16]}, displacement {ob.displacement_ts[:16]}) "
-        f"| fib 0.618-0.786: {z_low:,.2f}-{z_high:,.2f}"
+        f"| entry band 0.25-0.50: {z_low:,.2f}-{z_high:,.2f} "
+        f"| tranches @ {t1:,.2f} / {t2:,.2f} | add @ {add:,.2f}"
     )

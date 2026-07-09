@@ -17,11 +17,11 @@ import validate
 from patterns.market_context import MarketContext
 from patterns.order_block import (
     bounds_close,
+    entry_valid_at_price,
     fib_zone_bounds,
     find_matching_h1_ob,
     meets_min_ob_width,
     ob_width_pct,
-    price_in_fib_zone,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ Detected separately on **H1** candles. On the **H1 marked chart**, valid blocks 
 |------|--------|
 | **order_block JSON** | Must be an **H1 OB** (candle timestamps on the H1 chart). Never copy H12 OB bounds into order_block. |
 | **Minimum width** | OB zone must be at least **1.25%** wide (high−low as % of mid price). Narrow single-candle wicks are not valid OBs. |
-| **Entry** | Must sit inside the H1 OB **fib 0.618–0.786** sweet spot (see programmatic context for computed levels). |
+| **Entry** | Must sit on an H1 OB fib tranche (**0.25** or **0.50**) or inside the **0.25–0.50** band (see programmatic context). Scale-in at **0.718** is watchdog-only. |
 | **Rationale** | Cite **H12 OB/BRKR** for HTF bias; cite **H1 OB** only for entry justification. If zones overlap, say "H1 OB coincides with H12 OB". |
 | **No H1 fib** | If price is only inside an H12 OB (not H1 fib), return **no_trade** or wait for H1 retest. |
 
@@ -273,10 +273,11 @@ def _validate_order_block_entry(
     entry = float(suggestion.entry)  # type: ignore[arg-type]
     z_low, z_high = fib_zone_bounds(direction, low, high)
 
-    if not price_in_fib_zone(entry, direction, low, high):
+    if not entry_valid_at_price(entry, direction, low, high):
         raise ValueError(
-            f"entry {entry:,.2f} outside H1 OB fib 0.618-0.786 zone "
-            f"({z_low:,.2f}-{z_high:,.2f}) for order_block {low:,.2f}-{high:,.2f}"
+            f"entry {entry:,.2f} outside H1 OB fib entry band "
+            f"({z_low:,.2f}-{z_high:,.2f}) or tranche levels 0.25/0.50 "
+            f"for order_block {low:,.2f}-{high:,.2f}"
         )
 
     if market_context is None:

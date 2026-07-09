@@ -317,7 +317,7 @@ def _draw_fib_zone(
   start_ts: str | None = None,
   end_ts: str | None = None,
 ) -> None:
-  """Shade 0.618–0.786 entry slice inside an OB."""
+  """Shade 0.25–0.50 entry band inside an OB."""
   z_low, z_high = fib_zone_bounds(direction, low, high)  # type: ignore[arg-type]
   if start_ts and end_ts:
     x0, x1 = _bar_x_range(df, start_ts, end_ts)
@@ -340,7 +340,7 @@ def _draw_fib_zone(
   ax.text(
     left,
     z_high,
-    " Fib 0.618–0.786",
+    " Fib 0.25–0.50",
     color="#B8860B",
     fontsize=FONT_SIZE - 1,
     fontweight="bold",
