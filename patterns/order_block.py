@@ -13,6 +13,7 @@ from bot_config import (
     ENTRY_FIB_LOW,
     FIB_LEVEL_TOLERANCE_PCT,
     OB_MIN_WIDTH_PCT,
+    OB_MIN_WIDTH_PCT_M5,
 )
 from patterns.swing import Pivot, find_pivots
 
@@ -61,15 +62,21 @@ def ob_from_displacement(
     df: pd.DataFrame,
     displacement_idx: int,
     direction: Direction,
+    *,
+    min_width_pct: float = OB_MIN_WIDTH_PCT,
 ) -> OrderBlock | None:
     """Last opposite candle before a displacement bar that breaks structure."""
-    return _ob_from_displacement(df, displacement_idx, direction)
+    return _ob_from_displacement(
+        df, displacement_idx, direction, min_width_pct=min_width_pct
+    )
 
 
 def _ob_from_displacement(
     df: pd.DataFrame,
     displacement_idx: int,
     direction: Direction,
+    *,
+    min_width_pct: float = OB_MIN_WIDTH_PCT,
 ) -> OrderBlock | None:
     """Last opposite candle before a displacement bar that breaks structure."""
     opposite: Direction = "bearish" if direction == "bullish" else "bullish"
@@ -79,7 +86,7 @@ def _ob_from_displacement(
             continue
         low = round(float(row["low"]), 2)
         high = round(float(row["high"]), 2)
-        if not meets_min_ob_width(low, high):
+        if not meets_min_ob_width(low, high, min_width_pct=min_width_pct):
             return None
         ts = df.index[j].strftime("%Y-%m-%dT%H:%M:%SZ")
         disp_ts = df.index[displacement_idx].strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -94,7 +101,12 @@ def _ob_from_displacement(
     return None
 
 
-def find_order_blocks(bars: list[dict], lookback: int = 60) -> list[OrderBlock]:
+def find_order_blocks(
+    bars: list[dict],
+    lookback: int = 60,
+    *,
+    min_width_pct: float | None = None,
+) -> list[OrderBlock]:
     """
     Scan recent bars for displacement through swing structure.
     Bullish OB: last down candle before close breaks above prior swing high.
@@ -102,6 +114,8 @@ def find_order_blocks(bars: list[dict], lookback: int = 60) -> list[OrderBlock]:
     """
     if len(bars) < lookback:
         return []
+
+    width_floor = OB_MIN_WIDTH_PCT_M5 if min_width_pct is None else min_width_pct
 
     df = pd.DataFrame(bars)
     df["ts"] = pd.to_datetime(df["ts"], utc=True)
@@ -119,11 +133,15 @@ def find_order_blocks(bars: list[dict], lookback: int = 60) -> list[OrderBlock]:
         swing_low = _last_swing_before(pivots, i, "low")
 
         if swing_high and close > swing_high.price:
-            ob = ob_from_displacement(df, i, "bullish")
+            ob = ob_from_displacement(
+                df, i, "bullish", min_width_pct=width_floor
+            )
             if ob:
                 blocks.append(ob)
         if swing_low and close < swing_low.price:
-            ob = ob_from_displacement(df, i, "bearish")
+            ob = ob_from_displacement(
+                df, i, "bearish", min_width_pct=width_floor
+            )
             if ob:
                 blocks.append(ob)
 

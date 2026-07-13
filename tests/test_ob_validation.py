@@ -38,10 +38,10 @@ def test_validate_rejects_entry_outside_fib_zone():
 
 
 def test_validate_rejects_narrow_order_block():
-    with pytest.raises(ValueError, match="below minimum 1.25%"):
+    with pytest.raises(ValueError, match=r"below minimum 0\.15%"):
         _validate(_trade_payload(order_block={
             "low": 2400.0,
-            "high": 2405.0,
+            "high": 2401.0,
             "start_ts": "2026-06-20T12:00:00Z",
             "end_ts": "2026-06-20T12:00:00Z",
         }))

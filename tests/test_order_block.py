@@ -97,3 +97,5 @@ def test_ob_width_pct():
 def test_meets_min_ob_width():
     assert meets_min_ob_width(100.0, 101.26)
     assert not meets_min_ob_width(100.0, 101.0)
+    assert meets_min_ob_width(100.0, 100.16, min_width_pct=0.15)
+    assert not meets_min_ob_width(100.0, 100.10, min_width_pct=0.15)

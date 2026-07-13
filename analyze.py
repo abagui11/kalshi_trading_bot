@@ -11,6 +11,7 @@ from pathlib import Path
 
 import anthropic
 
+import bot_config
 import config
 from models import Suggestion
 import validate
@@ -110,7 +111,7 @@ Detected separately on **M5** candles. On the **M5 marked chart**, valid blocks 
 | Rule | Detail |
 |------|--------|
 | **order_block JSON** | Must be an **M5 OB** (candle timestamps on the M5 chart). Never copy H4 OB bounds into order_block. |
-| **Minimum width** | OB zone must be at least **1.25%** wide (high−low as % of mid price). Narrow single-candle wicks are not valid OBs. |
+| **Minimum width** | M5 OB zone must be at least **0.15%** wide (high−low as % of mid price). H4 HTF OBs still use the wider **1.25%** filter. |
 | **Entry** | Must sit on an M5 OB fib tranche (**0.25** or **0.50**) or inside the **0.25–0.50** band (see programmatic context). Scale-in at **0.718** is watchdog-only. |
 | **Rationale** | Cite **H4 OB/BRKR** for HTF context; cite **M5 OB** for entry justification. HTF bias is advisory — do not skip a valid M5 OB/SFP trade solely because H4 has not flipped. If zones overlap, say "M5 OB coincides with H4 OB". |
 | **No M5 fib** | If price is only inside an H4 OB (not M5 fib), return **no_trade** or wait for M5 retest. |
@@ -264,9 +265,10 @@ def _validate_order_block_entry(
     high = float(ob["high"])
     if low >= high:
         raise ValueError(f"order_block low ({low}) must be below high ({high})")
-    if not meets_min_ob_width(low, high):
+    if not meets_min_ob_width(low, high, min_width_pct=bot_config.OB_MIN_WIDTH_PCT_M5):
         raise ValueError(
-            f"order_block width ({ob_width_pct(low, high):.2f}%) is below minimum 1.25%"
+            f"order_block width ({ob_width_pct(low, high):.2f}%) is below minimum "
+            f"{bot_config.OB_MIN_WIDTH_PCT_M5:.2f}%"
         )
 
     direction = _trade_direction(suggestion.action)

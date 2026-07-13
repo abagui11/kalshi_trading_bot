@@ -32,8 +32,10 @@ FIB_LEVEL_TOLERANCE_PCT = 0.008  # looser "near" fib mark for M5 watchdog
 MIN_ETH_QTY = 0.25
 MAX_ETH_QTY = 2.0
 
-# Minimum OB zone width as % of mid price (applied to all timeframes).
+# Minimum OB zone width as % of mid price.
+# HTF (H4) keeps the swing-style filter; M5 entry candles are much thinner.
 OB_MIN_WIDTH_PCT = 1.25
+OB_MIN_WIDTH_PCT_M5 = 0.15
 
 # Label for the current paper epoch (shown on dashboard after reset).
 PAPER_EPOCH_LABEL = "5k_usd"

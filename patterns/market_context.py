@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+import bot_config
 from patterns.htf_structure import HTFZone, detect_htf_zones
 from patterns.key_levels import KeyLevel, compute_key_levels, nearest_levels
 from patterns.order_block import (
@@ -309,7 +310,11 @@ def build_market_context(
         )
         setup_tags.append("retest_already_tagged")
 
-    order_blocks = find_order_blocks(m5_bars, lookback=min(M5_OB_LOOKBACK, len(m5_bars)))
+    order_blocks = find_order_blocks(
+        m5_bars,
+        lookback=min(M5_OB_LOOKBACK, len(m5_bars)),
+        min_width_pct=bot_config.OB_MIN_WIDTH_PCT_M5,
+    )
     for ob in order_blocks:
         z_low, z_high = fib_zone_bounds(ob.direction, ob.low, ob.high)
         in_full_ob = ob.low <= spot <= ob.high
