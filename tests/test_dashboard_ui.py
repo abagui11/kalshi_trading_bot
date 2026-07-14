@@ -165,7 +165,12 @@ class DashboardUiSmokeTests(unittest.TestCase):
         self.assertIn("max-height: 280px", css)
         self.assertIn("max-width: 100%", css)
         self.assertIn(".macro-scroll", css)
-        self.assertRegex(css, r"\.macro-scroll\s*\{[^}]*max-height:\s*260px")
+        self.assertRegex(css, r"\.macro-scroll\s*\{[^}]*aspect-ratio:\s*1\s*/\s*1")
+        self.assertRegex(css, r"\.macro-scroll\s*\{[^}]*width:\s*min\(100%,\s*480px\)")
+        self.assertIn(".trade-summary .trade-thumb", css)
+        self.assertIn(".trade-chart .chart-img", css)
+        self.assertIn("height: 200px", css)
+        self.assertIn("gap: 16px", css)
         self.assertNotIn("<details", self.client.get("/").text)
         html = self.client.get("/").text
         self.assertEqual(html.count('class="macro-scroll"'), 1)
