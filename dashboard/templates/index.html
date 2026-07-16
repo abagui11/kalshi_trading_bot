@@ -264,7 +264,20 @@
       {% endif %}
     </section>
 
-    {% if status.h4_chart_url %}
+    {% if status.h4_charts %}
+    <section class="card">
+      <h2>H4 structure (marked)</h2>
+      <p class="sub" style="margin-bottom:8px">What the agent sees now — ETH and BTC</p>
+      <div class="h4-charts">
+        {% for c in status.h4_charts %}
+        <figure class="h4-chart">
+          <figcaption>{{ c.product_label }}-USD · H4</figcaption>
+          <img class="chart-img zoomable" src="{{ c.url }}" alt="{{ c.product_label }} H4 marked chart" loading="lazy">
+        </figure>
+        {% endfor %}
+      </div>
+    </section>
+    {% elif status.h4_chart_url %}
     <section class="card">
       <h2>H4 structure (marked)</h2>
       <p class="sub" style="margin-bottom:8px">What the agent sees now</p>

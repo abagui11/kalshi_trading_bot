@@ -91,6 +91,18 @@ def run_cycle() -> list[tuple[Suggestion, list[str]]] | None:
                 )
             ]
 
+        # Always persist a decision (trade or no_trade) per product so both
+        # ETH and BTC marked charts stay available on the dashboard.
+        selected_by_product = {s.product_id: s for s in selected}
+        for product_id in bot_config.TRADED_PRODUCTS:
+            if product_id not in selected_by_product:
+                selected.append(
+                    Suggestion.no_trade(
+                        "No independent setup for this asset this cycle.",
+                        product_id=product_id,
+                    )
+                )
+
         spots = research.get_spot_prices()
         results: list[tuple[Suggestion, list[str]]] = []
         for suggestion in selected:

@@ -128,10 +128,40 @@ img {
   max-height: 280px;
   height: auto;
   object-fit: contain;
-  object-position: left center;
+  object-position: center center;
   border-radius: 8px;
   display: block;
   background: var(--bg);
+}
+
+.h4-charts {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.h4-chart {
+  margin: 0;
+  min-width: 0;
+}
+
+.h4-chart figcaption {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.h4-chart .chart-img {
+  max-height: 320px;
+}
+
+@media (min-width: 900px) {
+  .h4-charts {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 ul.plain {

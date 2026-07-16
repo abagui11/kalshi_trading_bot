@@ -247,7 +247,7 @@ Legend: ✅ done · 🟡 in progress · 🔧 needs work · ⬜ planned · ⚠️
 | Chat Q&A | `bot.py`, `chat.py` | ✅ | snapshot-grounded + chat audit |
 | Telegram research | `research_reports/`, `metrics/`, `analytics.py` | ✅ | `/research` catalog; snapshot digests + H12 SFP studies |
 | Persistence | `ledger.py`, `audit.py`, `paper.py` | ✅ | SQLite |
-| Dashboard | `dashboard/` | ✅ | dual ETH/BTC live spots; shared-book P&L; dollar trade size + qty; paginated cycles/closed trades; chart-read score tooltips; expandable dual H4/M5 charts |
+| Dashboard | `dashboard/` | ✅ | dual ETH/BTC live spots + side-by-side H4 marked structure; shared-book P&L; dollar trade size + qty; paginated cycles/closed trades; chart-read score tooltips; expandable dual H4/M5 charts |
 | Paper trading | `paper.py` | ✅ | multi-asset (ETH/BTC) book, fixed 25% USD-notional deploy, per-product qty caps, user contributions, FIFO cap, epoch archives; outcome charts on close |
 | Telegram beta UI | `bot.py`, `telegram_ui.py` | ✅ | inline Fund/My Metrics/Portfolio/Research/Refresh keyboard; one-time fake $1,000 contribution and proportional metrics |
 | Live execution | `execute.py` | ⬜ | shadow/live path not built |
@@ -306,6 +306,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-16 | Dashboard H4 structure section shows ETH and BTC marked charts side by side; hourly cycle always persists a per-product decision so both charts stay available. |
 | 2026-07-16 | Trading Guide sizing section aligned to USD-notional contract; added `tests/test_relative_strength.py` (W1 ratio/soft-gate) and `tests/test_contributions.py` (Fund/My Metrics). |
 | 2026-07-16 | Sizing contract switched to USD notional: `Suggestion.size` now stores deployed dollars, paper converts to ETH/BTC qty for P&L, and dashboard/Telegram show dollar size first with quantity secondary. |
 | 2026-07-16 | Beta operator surfaces completed for dual-asset paper contributions: Telegram inline Fund/My Metrics/Portfolio/Research UX; dashboard ETH+BTC spots, asset labels, API pagination, and chart-read score tooltips; deployment/onboarding docs updated for public dashboard links and open beta access. |

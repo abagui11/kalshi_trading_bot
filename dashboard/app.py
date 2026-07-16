@@ -19,6 +19,7 @@ from dashboard.charts import (
     VALID_KINDS,
     VALID_TFS,
     h4_marked_path,
+    latest_marked_h4_path,
     resolve_chart_path,
     resolve_trade_chart,
 )
@@ -154,6 +155,14 @@ def create_app() -> FastAPI:
         if snapshot is None:
             raise HTTPException(status_code=404, detail="No snapshot")
         path = h4_marked_path(snapshot.get("marked_chart_paths"))
+        if path is None:
+            raise HTTPException(status_code=404, detail="H4 chart not found")
+        return FileResponse(path, media_type="image/png")
+
+    @app.get("/api/chart/product/{product_id}/h4")
+    async def api_chart_product_h4(product_id: str) -> FileResponse:
+        """Newest marked H4 PNG for a product (disk fallback when no snapshot)."""
+        path = latest_marked_h4_path(product_id)
         if path is None:
             raise HTTPException(status_code=404, detail="H4 chart not found")
         return FileResponse(path, media_type="image/png")

@@ -78,6 +78,20 @@ class DashboardUiSmokeTests(unittest.TestCase):
                     "chart_read_score": None,
                     "score_badge": "none",
                     "h4_chart_url": "/api/chart/latest",
+                    "h4_charts": [
+                        {
+                            "product_id": "ETH-USD",
+                            "product_label": "ETH",
+                            "cycle_id": "test_ETH",
+                            "url": "/api/chart/test_ETH",
+                        },
+                        {
+                            "product_id": "BTC-USD",
+                            "product_label": "BTC",
+                            "cycle_id": "test_BTC",
+                            "url": "/api/chart/test_BTC",
+                        },
+                    ],
                 },
             ),
             patch(
@@ -196,6 +210,9 @@ class DashboardUiSmokeTests(unittest.TestCase):
         html = self.client.get("/").text
         self.assertEqual(html.count('class="macro-scroll"'), 1)
         self.assertIn('id="macro-feed"', html)
+        self.assertIn("h4-charts", html)
+        self.assertIn("ETH-USD · H4", html)
+        self.assertIn("BTC-USD · H4", html)
 
 
 if __name__ == "__main__":

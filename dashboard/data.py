@@ -12,7 +12,7 @@ import ledger
 import paper
 import research
 
-from dashboard.charts import h4_marked_path, trade_chart_urls
+from dashboard.charts import h4_marked_path, latest_marked_h4_path, trade_chart_urls
 from dashboard.performance import build_performance, _score_badge, score_tooltip
 from dashboard.status import format_agent_status
 from macro.context import macro_payload_for_dashboard
@@ -43,6 +43,52 @@ def get_live_spots() -> dict[str, Any]:
     return {"spots": dict(_spots_cache[0]), "ts": int(_spots_cache[1])}
 
 
+def _latest_h4_charts(limit: int = 40) -> list[dict[str, Any]]:
+    """Latest marked H4 chart URL per traded product (ETH then BTC).
+
+    Prefers audit snapshots via the ledger; falls back to the newest marked
+    H4 PNG on disk so BTC still appears when it has not yet been selected.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    traded = set(bot_config.TRADED_PRODUCTS)
+    for row in ledger.get_latest(limit):
+        product_id = str(row.get("product_id") or "ETH-USD")
+        if product_id in found or product_id not in traded:
+            continue
+        cycle_id = str(row.get("cycle_id") or "")
+        if not cycle_id:
+            continue
+        snapshot = audit.get_snapshot(cycle_id)
+        if h4_marked_path((snapshot or {}).get("marked_chart_paths")) is None:
+            continue
+        found[product_id] = {
+            "product_id": product_id,
+            "product_label": bot_config.product_label(product_id),
+            "cycle_id": cycle_id,
+            "url": f"/api/chart/{cycle_id}",
+        }
+        if len(found) >= len(traded):
+            break
+
+    for product_id in bot_config.TRADED_PRODUCTS:
+        if product_id in found:
+            continue
+        if latest_marked_h4_path(product_id) is None:
+            continue
+        found[product_id] = {
+            "product_id": product_id,
+            "product_label": bot_config.product_label(product_id),
+            "cycle_id": None,
+            "url": f"/api/chart/product/{product_id}/h4",
+        }
+
+    return [
+        found[pid]
+        for pid in bot_config.TRADED_PRODUCTS
+        if pid in found
+    ]
+
+
 def get_status_payload() -> dict[str, Any]:
     spots_payload = get_live_spots()
     spots = spots_payload["spots"]
@@ -58,7 +104,13 @@ def get_status_payload() -> dict[str, Any]:
     verdict = None
     if status.get("cycle_id"):
         verdict = audit.get_verdict_by_cycle_id(str(status["cycle_id"]))
+    h4_charts = _latest_h4_charts()
     chart_path = h4_marked_path((snapshot or {}).get("marked_chart_paths"))
+    legacy_url = (
+        f"/api/chart/{status['cycle_id']}"
+        if chart_path and status.get("cycle_id")
+        else None
+    )
     breakdown = (verdict or {}).get("score_breakdown")
     score = verdict.get("score") if verdict else None
     return {
@@ -71,9 +123,8 @@ def get_status_payload() -> dict[str, Any]:
         "score_badge": _score_badge(score),
         "score_breakdown": breakdown,
         "score_tooltip": score_tooltip(score, breakdown),
-        "h4_chart_url": (
-            f"/api/chart/{status['cycle_id']}" if chart_path and status.get("cycle_id") else None
-        ),
+        "h4_charts": h4_charts,
+        "h4_chart_url": (h4_charts[0]["url"] if h4_charts else legacy_url),
         "open_by_product": _open_counts_by_product(positions),
     }
 

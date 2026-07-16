@@ -35,6 +35,25 @@ def convention_chart_path(cycle_id: str, tf: str, kind: str) -> Path | None:
     return resolve_chart_path(str(config.CHARTS_DIR / f"{cycle_id}_{tf}_{kind}.png"))
 
 
+def latest_marked_h4_path(product_id: str) -> Path | None:
+    """Newest ``*_{slug}_H4_marked.png`` on disk for a product (ETH-USD / BTC-USD)."""
+    if not product_id:
+        return None
+    slug = product_id.replace("/", "_").replace("-", "_")
+    root = config.CHARTS_DIR
+    try:
+        if not root.is_dir():
+            return None
+        matches = list(root.glob(f"*_{slug}_H4_marked.png"))
+        if not matches:
+            matches = list(root.glob(f"*_{slug.lower()}_H4_marked.png"))
+    except OSError:
+        return None
+    if not matches:
+        return None
+    return max(matches, key=lambda p: p.stat().st_mtime)
+
+
 def parse_ledger_chart_paths(chart_path: str | None) -> list[Path]:
     """Split comma-joined ledger chart_path into existing safe Paths."""
     if not chart_path:
