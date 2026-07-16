@@ -3,7 +3,7 @@
 > Single source of truth for architecture and status of the Telegram trading bot.
 > See **Documentation maintenance** below — update this file (and related deploy docs) whenever behaviour changes.
 
-**Last updated:** 2026-07-14
+**Last updated:** 2026-07-16
 
 ---
 
@@ -31,9 +31,9 @@ Related deploy docs: [`CLOUD.md`](CLOUD.md) · `setup.sh` · `update.sh` · `eth
 
 ## 1. What this system is
 
-A Telegram bot that runs an hourly LLM-driven trading cycle and a sub-hourly programmatic watchdog over Coinbase OHLC data, validates and audits every suggestion before broadcast, paper-trades the results, and answers chat questions with ledger/audit context. All state is persisted to SQLite and surfaced through a FastAPI dashboard and Telegram read-back.
+A Telegram bot that runs an hourly dual-asset LLM trading cycle and a sub-hourly dual-asset programmatic watchdog over Coinbase ETH-USD and BTC-USD data. W1 ETH/BTC relative strength biases asset selection and soft-gates watchdog entries. Every suggestion is validated and audited before broadcast, then applied to one shared paper book. Telegram users can make a one-time fake **Fund $1,000** contribution and track their proportional paper equity. State is persisted to SQLite and surfaced through a FastAPI dashboard and Telegram read-back.
 
-Three runtime paths (hourly, watchdog, chat), one shared data/context layer, shared persistence.
+Four operator-facing paths (hourly, watchdog, Telegram chat/inline UI, dashboard), one shared data/context layer, and one shared paper book.
 
 ---
 
@@ -42,23 +42,28 @@ Three runtime paths (hourly, watchdog, chat), one shared data/context layer, sha
 ```mermaid
 flowchart TD
     subgraph ENTRY["main.py — Telegram bot + job queue"]
-        TG[Telegram polling<br/>bot.py handlers]
-        HJ[hourly_job<br/>every 3600s]
-        WJ[watchdog_job<br/>every 60–300s<br/>if WATCHDOG_ENABLED]
+        TG[Telegram polling<br/>commands, chat + inline callbacks]
+        HJ[hourly_job<br/>ETH-USD + BTC-USD every 3600s]
+        WJ[watchdog_job<br/>ETH-USD + BTC-USD every 60–300s<br/>if WATCHDOG_ENABLED]
         MJ[macro_feed_job<br/>every 300s<br/>if MACRO_CONTEXT_ENABLED]
     end
 
-    ENTRY --> DATA[research.py + build_market_context<br/>Coinbase OHLC → MarketContext]
+    ENTRY --> DATA[research.py + build_market_context<br/>Coinbase ETH/BTC OHLC → per-product MarketContext]
+    DATA --> RS[W1 ETH/BTC ratio<br/>relative-strength bias]
     MJ --> MACRO[macro/ RSS + webhook ingest<br/>keyword score → Haiku classify]
     MACRO --> STORE
 
     TG --> CHAT[Chat Q&A<br/>bot.py on_text]
+    TG --> TGUI[Inline keyboard<br/>Fund · My Metrics · Portfolio · Research]
     HJ --> HOURLY[Hourly cycle<br/>agent.run_cycle]
     WJ --> WATCH[Watchdog<br/>no LLM, sub-hourly]
     DATA --> HOURLY
     DATA --> WATCH
+    RS --> HOURLY
+    RS --> WATCH
 
     CHAT --> STORE[(SQLite persistence)]
+    TGUI --> STORE
     HOURLY --> STORE
     WATCH --> STORE
     STORE --> READ[FastAPI dashboard +<br/>Telegram read-back]
@@ -68,19 +73,20 @@ flowchart TD
 
 ## 3. Data + market context layer
 
-`research.py` pulls feeds from Coinbase; `patterns/market_context.py` → `build_market_context` assembles a `MarketContext` consumed by both the hourly cycle and the watchdog.
+`research.py` pulls ETH-USD and BTC-USD feeds from Coinbase; `patterns/market_context.py` → `build_market_context` assembles one `MarketContext` per product. `patterns/relative_strength.py` aligns weekly ETH and BTC bars into an ETH/BTC ratio, detects nearby W1 zones/SFPs, and infers `eth_strong`, `btc_strong`, or `neutral`. The hourly proposal receives that context as an asset preference; the watchdog rejects only entries that clearly fight it (long weaker asset or short stronger asset), so it remains a soft gate rather than a standalone signal.
 
 Live strategy timeframes: **H4 → H1 → M5**. H12 remains available for research/historical studies only.
 
 ```mermaid
 flowchart TD
-    API[Coinbase OHLC API] --> R1[H4 / H1 / M5 native]
+    API[Coinbase OHLC API] --> R1[ETH + BTC H4 / H1 / M5 native]
     API --> R2[H12 resample from paginated H1<br/>research only]
     API --> R3[Daily bars for key levels]
-    API --> R4[Live spot ticker<br/>watchdog only]
+    API --> R4[Live ETH + BTC spots<br/>watchdog, paper MTM + dashboard]
 
     R1 --> MC[MarketContext]
     R3 --> MC
+    API --> RS[ETH/BTC W1 ratio<br/>relative-strength context]
 
     MC --> MC1[compute_range_24h on H1 + range state]
     MC --> MC2[detect_sfps H4 + M5]
@@ -95,13 +101,15 @@ flowchart TD
 
 ## 4. Hourly vision cycle (`agent.run_cycle`)
 
-The LLM path: render charts → propose → validate → refine loop → compose → persist → broadcast → monitor audit.
+The LLM path builds both products plus W1 ETH/BTC context in one proposal call, then validates, refines, persists, and broadcasts each actionable product independently.
 
 ```mermaid
 flowchart TD
-    D1[get_all_timeframes + daily bars] --> CTX[build_market_context H4/H1/M5]
-    CTX --> CH1[render_marked_charts<br/>H4/H1/M5 PNGs with overlays]
-    CH1 --> PT[propose_trade — Claude<br/>charts + Trading Guide + market_context]
+    D1[ETH + BTC timeframes + daily bars] --> CTX[build MarketContext per product]
+    CTX --> CH1[render marked ETH + BTC<br/>H4/H1/M5 charts]
+    D1 --> RS[build + render W1 ETH/BTC ratio]
+    CH1 --> PT[propose_trades_multi — Claude<br/>both assets + ratio + contexts]
+    RS --> PT
 
     PT --> V1{_validate in analyze.py}
     V1 -->|trade| V1a[M5 OB + fib zone match]
@@ -115,7 +123,7 @@ flowchart TD
     FD --> OK{findings require refine?}
     FL --> OK
     OK -->|yes, passes left| RETRY[propose_trade retry<br/>with audit_feedback]
-    RETRY --> REF
+    RETRY[propose_trade single-product retry<br/>with audit_feedback] --> REF
     OK -->|exhausted passes| DOWN[downgrade / sanitize → no_trade]
     OK -->|no| CR[compose_rationale<br/>thesis then Market context]
     DOWN --> CR
@@ -136,16 +144,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    WD1[get_all_timeframes + live spot<br/>apply_live_spot_to_bars on M5] --> CTX2[build_market_context<br/>spot_override]
+    WD1[Loop ETH + BTC timeframes + live spot<br/>apply_live_spot_to_bars on M5] --> CTX2[build MarketContext per product<br/>spot_override]
+    RS2[Build W1 ETH/BTC bias once] --> RSG{relative-strength<br/>soft gate}
     CTX2 --> TRG[evaluate_triggers]
     TRG --> T1[short_trigger_retest]
     TRG --> T2[m5_sfp_close on latest bar]
     TRG --> T3[m5_ob_fib tranches 0.25 / 0.50 + 0.718 add]
     TRG --> T4[m5_sfp_sweep_reversal]
 
-    T1 --> CD{cooldown?}
-    T2 --> CD
-    T3 --> CD
+    T1 --> RSG
+    T2 --> RSG
+    T3 --> RSG
+    RSG --> CD{product-prefixed cooldown?}
     CD -->|active| WSKIP[skip trigger]
     CD -->|ok| BS[build_suggestion programmatic]
 
@@ -158,18 +168,27 @@ flowchart TD
 
 ---
 
-## 6. Chat Q&A (`bot.py on_text`)
+## 6. Telegram chat + inline UI (`bot.py`, `telegram_ui.py`)
 
 ```mermaid
 flowchart TD
-    TG[Telegram message] --> QA[chat.answer — Claude<br/>ledger + audit snapshot context]
+    TG[Telegram message or /start] --> KB[Inline keyboard<br/>Fund · My Metrics · Portfolio · Research · Refresh]
+    TG --> QA[chat.answer — Claude<br/>ledger + audit snapshot context]
     QA --> CAR[refine_chat_reply<br/>audit_text + sanitize on critical codes]
     CAR --> CAI[audit.log_chat_audit]
     CAR --> AL{verdict.has_issues?}
     AL -->|yes| MA[send_monitor_alert]
     AL -->|no| REPLY[reply + PnL footer]
     MA --> REPLY
+    KB --> FUND[Fund<br/>one-time fake $1,000 contribution]
+    KB --> METRICS[My Metrics<br/>ownership, equity + PnL]
+    KB --> PORT[Portfolio<br/>DASHBOARD_PUBLIC_URL]
+    KB --> RESEARCH[Research help/catalog]
+    FUND --> CONTRIB[(paper_contributions)]
+    METRICS --> BOOK[(shared paper book)]
 ```
+
+`Fund` is explicitly a beta placeholder for future real funding: it does not move real money. `paper.fund_user` accepts one contribution per Telegram ID, adds `$1,000` to shared paper cash/starting equity, and records ownership in `paper_contributions`. `My Metrics` marks the whole shared ETH/BTC book to current spots, then reports the user's proportional equity and P&L.
 
 ---
 
@@ -183,6 +202,7 @@ flowchart LR
         DB3[(audit_snapshots)]
         DB4[(audit_verdicts + chart-read score)]
         DB5[(chat_audits)]
+        DB6[(paper_contributions)]
     end
 
     STORE --> DASH[FastAPI dashboard]
@@ -197,6 +217,7 @@ Writers → stores:
 |---|---|---|
 | `ledger` | hourly cycle, watchdog | dashboard, Telegram |
 | `paper` | hourly cycle, watchdog | dashboard, Telegram |
+| `paper_contributions` | Telegram Fund callback; house seed on paper init/reset | Telegram Fund/My Metrics; dashboard aggregate contribution total |
 | `audit_snapshots` | hourly cycle | dashboard, chat, monitor |
 | `audit_verdicts` | hourly monitor, chat audit | dashboard |
 | `chat_audits` | chat Q&A | — |
@@ -211,23 +232,24 @@ Legend: ✅ done · 🟡 in progress · 🔧 needs work · ⬜ planned · ⚠️
 | Component | File(s) | Status | Notes |
 |---|---|---|---|
 | Coinbase OHLC ingest | `research.py` | ✅ | H4/H1/M5 live; H12 resample research-only; daily; live spot |
-| Market context | `patterns/market_context.py` | ✅ | alerts, setup_tags, summary_text (H4/M5) |
+| Market context | `patterns/market_context.py`, `patterns/relative_strength.py` | ✅ | per-product alerts/tags/summary plus W1 ETH/BTC bias |
 | SFP detection | `patterns/sfp.py` | ✅ | H4 + M5 (live); H12 still used in research |
 | HTF zones | `patterns/htf_structure.py`, `patterns/zone_resolver.py` | 🟡 | detect_zones on H4; resolve_zones tuning |
 | Order blocks | `patterns/order_block.py` | 🟡 | M5 OB + fib matching |
 | 24h range | `patterns/range_24h.py` | ✅ | computed on H1 bars |
 | Bearish retest state | `patterns/setup_state.py` | ✅ | |
-| Hourly cycle | `agent.py` | ✅ | |
-| Trade proposal (LLM) | `analyze.py` | ✅ | JSON retry + `_validate` |
-| Trade risk validation | `validate.py` | ✅ | stop dist, R/R, sizing |
+| Hourly cycle | `agent.py` | ✅ | dual ETH/BTC contexts, charts, per-product persistence/broadcast |
+| Trade proposal (LLM) | `analyze.py` | ✅ | one 0–2 trade multi-asset call; single-product critic retries |
+| Trade risk validation | `validate.py` | ✅ | stop dist, R/R, USD-notional sizing |
 | Refine / critic loop | `critic.py` | ✅ | pre-broadcast retries; context-conflict ack; thesis + Market context compose; post-cycle monitor |
-| Watchdog | `watchdog.py` | ✅ | M5 OB fib / SFP triggers (no HTF hard-gate); cooldown; macro soft gates |
+| Watchdog | `watchdog.py` | ✅ | loops ETH/BTC; one fire/product/tick; product cooldown; macro + ETH/BTC soft gates |
 | Macro context | `macro/` | ✅ | RSS poll, webhook ingest, keyword→Haiku classify, pulse, dashboard |
 | Chat Q&A | `bot.py`, `chat.py` | ✅ | snapshot-grounded + chat audit |
 | Telegram research | `research_reports/`, `metrics/`, `analytics.py` | ✅ | `/research` catalog; snapshot digests + H12 SFP studies |
 | Persistence | `ledger.py`, `audit.py`, `paper.py` | ✅ | SQLite |
-| Dashboard | `dashboard/` | ✅ | Trade journal (expandable cards, dual H4/M5 charts, rationale) + macro + P&L |
-| Paper trading | `paper.py` | ✅ | fixed 25% deploy sizing, FIFO cap, epoch archives; outcome charts on close |
+| Dashboard | `dashboard/` | ✅ | dual ETH/BTC live spots; shared-book P&L; dollar trade size + qty; paginated cycles/closed trades; chart-read score tooltips; expandable dual H4/M5 charts |
+| Paper trading | `paper.py` | ✅ | multi-asset (ETH/BTC) book, fixed 25% USD-notional deploy, per-product qty caps, user contributions, FIFO cap, epoch archives; outcome charts on close |
+| Telegram beta UI | `bot.py`, `telegram_ui.py` | ✅ | inline Fund/My Metrics/Portfolio/Research/Refresh keyboard; one-time fake $1,000 contribution and proportional metrics |
 | Live execution | `execute.py` | ⬜ | shadow/live path not built |
 | OHLC history cache | `ohlc_cache.py` | ✅ | research/backfill only, not hot path |
 | Legacy scheduler | `scheduler.py` | ⚠️ | deprecated; use `main.py` |
@@ -252,7 +274,12 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 | `ENTRY_TRANCHE_DEPLOY_PCT` | `0.125` | per-tranche deploy (half of `TRADE_DEPLOY_PCT`) |
 | `TRADE_DEPLOY_PCT` | `0.25` | fixed fraction of **live paper equity** deployed as notional per full idea (R/R unaffected) |
 | `FIB_LEVEL_TOLERANCE_PCT` | `0.008` | looser "near" fib mark for M5 watchdog |
-| `MIN_ETH_QTY` / `MAX_ETH_QTY` | `0.25` / `2.0` | paper size guardrails after fixed-fraction sizing |
+| `TRADED_PRODUCTS` | `("ETH-USD", "BTC-USD")` | products the hourly cycle and watchdog may trade concurrently |
+| `PRODUCT_QTY_CAPS` | `{"ETH-USD": (0.25, 2.0), "BTC-USD": (0.005, 0.05)}` | per-product paper size guardrails used by `qty_caps(product_id)` |
+| `MIN_ETH_QTY` / `MAX_ETH_QTY` | `0.25` / `2.0` | legacy aliases for the ETH entries in `PRODUCT_QTY_CAPS` |
+| `RELATIVE_STRENGTH_ENABLED` | `True` | adds W1 ETH/BTC proposal bias and watchdog soft gate |
+| `PAPER_CONTRIBUTION_USD` | `1000.0` | one-time fake Fund deposit per Telegram user |
+| `HOUSE_CONTRIBUTION_TELEGRAM_ID` | `0` | reserved Telegram ID for the house seed row in `paper_contributions` |
 | `OB_MIN_WIDTH_PCT` | `1.25` | minimum HTF (H4) OB zone width (% of mid price) |
 | `OB_MIN_WIDTH_PCT_M5` | `0.15` | minimum M5 entry OB width (M5 candles are ~10× thinner than H1) |
 | `PAPER_EPOCH_LABEL` | `"5k_usd"` | dashboard epoch label |
@@ -279,6 +306,11 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-16 | Trading Guide sizing section aligned to USD-notional contract; added `tests/test_relative_strength.py` (W1 ratio/soft-gate) and `tests/test_contributions.py` (Fund/My Metrics). |
+| 2026-07-16 | Sizing contract switched to USD notional: `Suggestion.size` now stores deployed dollars, paper converts to ETH/BTC qty for P&L, and dashboard/Telegram show dollar size first with quantity secondary. |
+| 2026-07-16 | Beta operator surfaces completed for dual-asset paper contributions: Telegram inline Fund/My Metrics/Portfolio/Research UX; dashboard ETH+BTC spots, asset labels, API pagination, and chart-read score tooltips; deployment/onboarding docs updated for public dashboard links and open beta access. |
+| 2026-07-16 | Dual-asset runtime path: hourly Claude call analyzes ETH + BTC with W1 ETH/BTC preference, then refines/persists each product separately; watchdog loops both products with relative-strength soft gates and product-specific cooldowns. |
+| 2026-07-16 | Paper multi-asset + contributions: `product_id`/`qty` on positions/trades (with `eth_qty` backcompat), spots-dict MTM, `qty_caps(product_id)`, `paper_contributions` + `fund_user` / `get_user_metrics`. |
 | 2026-07-16 | Broadcast UX: thesis first (“Why this trade”), programmatic alerts relabeled **Market context** below. Hourly refine requires `CONTEXT_CONFLICT_UNACKNOWLEDGED` acknowledgment when action opposes context (opposite M5 OB / opposite-only primary H4); watchdog skipped. |
 | 2026-07-14 | Dashboard chart lightbox: click thumbs / H4 / M5 charts to enlarge (Esc / backdrop / × to close). |
 | 2026-07-14 | Dashboard tag tooltips filled from Trading Guide (ranging, H4/M5 SFP, M5 OB fib, macro gates); macro feed widened to 640px. |

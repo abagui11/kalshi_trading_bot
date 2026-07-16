@@ -428,6 +428,9 @@ def refine_suggestion(
     )
 
     llm_body = suggestion.rationale.strip()
+    asset_preference = ""
+    if llm_body.lower().startswith("asset preference:"):
+        asset_preference = llm_body.split("\n\n", 1)[0].strip()
     sanitized = False
     downgraded = False
     passes_used = 0
@@ -465,8 +468,15 @@ def refine_suggestion(
             trading_guide=guide,
             market_context=market_context,
             audit_feedback=feedback,
+            product_id=suggestion.product_id,
         )
         llm_body = suggestion.rationale.strip()
+        if (
+            asset_preference
+            and asset_preference.lower() not in llm_body.lower()
+        ):
+            llm_body = f"{asset_preference}\n\n{llm_body}".strip()
+            suggestion.rationale = llm_body
 
     reason_codes = sorted({f.code for f in _collect_refine_findings(
         [f for f in final_findings if f.code != "LLM_HALLUCINATION"],
@@ -477,7 +487,9 @@ def refine_suggestion(
         llm_body = sanitize_rationale(
             market_context, downgrade_reason=reason_codes or None
         )
-        suggestion = Suggestion.no_trade(llm_body)
+        suggestion = Suggestion.no_trade(
+            llm_body, product_id=suggestion.product_id
+        )
         suggestion.decision_charts = ["H4"]
         downgraded = True
         sanitized = True
@@ -486,7 +498,9 @@ def refine_suggestion(
         [f for f in final_findings if f.code == "LLM_HALLUCINATION"],
     ):
         llm_body = sanitize_rationale(market_context)
-        suggestion = Suggestion.no_trade(llm_body)
+        suggestion = Suggestion.no_trade(
+            llm_body, product_id=suggestion.product_id
+        )
         suggestion.decision_charts = ["H4"]
         sanitized = True
 

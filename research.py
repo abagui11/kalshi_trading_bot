@@ -1,4 +1,4 @@
-"""Fetch ETH-USD OHLC candles from Coinbase public market data."""
+"""Fetch Coinbase OHLC candles (ETH-USD, BTC-USD, …) from public market data."""
 
 from __future__ import annotations
 
@@ -10,9 +10,11 @@ from typing import Any
 import pandas as pd
 import requests
 
+import bot_config
 import config
 
-PRODUCT_ID = "ETH-USD"
+# Default product for backward-compatible call sites.
+PRODUCT_ID = bot_config.DEFAULT_PRODUCT_ID
 _MAX_CANDLES = 350  # Coinbase hard cap per request
 
 # Spec timeframes -> Coinbase granularity and default bar counts.
@@ -65,6 +67,7 @@ def _normalize_candle(raw: dict[str, str]) -> dict[str, float | str]:
 
 
 def _fetch_coinbase_candles_page(
+    product_id: str,
     granularity: str,
     start: int,
     end: int,
@@ -72,7 +75,7 @@ def _fetch_coinbase_candles_page(
 ) -> list[dict[str, float | str]]:
     """Fetch one page of candles for [start, end] (unix seconds)."""
     capped = min(limit, _MAX_CANDLES)
-    url = f"{config.MARKET_DATA_API}/products/{PRODUCT_ID}/candles"
+    url = f"{config.MARKET_DATA_API}/products/{product_id}/candles"
     params = {
         "start": str(start),
         "end": str(end),
@@ -93,15 +96,19 @@ def _fetch_coinbase_candles_page(
     return bars
 
 
-def _fetch_coinbase_candles(granularity: str, limit: int) -> list[dict[str, float | str]]:
+def _fetch_coinbase_candles(
+    product_id: str,
+    granularity: str,
+    limit: int,
+) -> list[dict[str, float | str]]:
     seconds = _GRANULARITY_SECONDS[granularity]
     capped = min(limit, _MAX_CANDLES)
     end = int(time.time())
     start = end - capped * seconds
 
-    bars = _fetch_coinbase_candles_page(granularity, start, end, capped)
+    bars = _fetch_coinbase_candles_page(product_id, granularity, start, end, capped)
     if not bars:
-        raise RuntimeError(f"No candles returned for {PRODUCT_ID} {granularity}")
+        raise RuntimeError(f"No candles returned for {product_id} {granularity}")
     return bars[-capped:]
 
 
@@ -109,6 +116,8 @@ def fetch_coinbase_candles_range(
     granularity: str,
     start_ts: int,
     end_ts: int,
+    *,
+    product_id: str = PRODUCT_ID,
 ) -> list[dict[str, float | str]]:
     """Paginate Coinbase candles between unix start/end (inclusive window)."""
     if start_ts >= end_ts:
@@ -122,7 +131,7 @@ def fetch_coinbase_candles_range(
     while cursor < end_ts:
         chunk_end = min(cursor + window_seconds, end_ts)
         page = _fetch_coinbase_candles_page(
-            granularity, cursor, chunk_end, _MAX_CANDLES
+            product_id, granularity, cursor, chunk_end, _MAX_CANDLES
         )
         if not page:
             cursor = chunk_end
@@ -202,22 +211,31 @@ def _resample_weekly(daily_bars: list[dict[str, float | str]], limit: int) -> li
     return rows
 
 
-def fetch_h1_bars(count: int) -> list[dict[str, float | str]]:
+def fetch_h1_bars(
+    count: int,
+    *,
+    product_id: str = PRODUCT_ID,
+) -> list[dict[str, float | str]]:
     """Fetch `count` most recent H1 bars, paginating past the 350-candle API cap."""
     if count <= _MAX_CANDLES:
-        return _fetch_coinbase_candles("ONE_HOUR", count)
+        return _fetch_coinbase_candles(product_id, "ONE_HOUR", count)
 
     end = int(time.time())
     seconds = _GRANULARITY_SECONDS["ONE_HOUR"]
     start = end - count * seconds
-    bars = fetch_coinbase_candles_range("ONE_HOUR", start, end)
+    bars = fetch_coinbase_candles_range("ONE_HOUR", start, end, product_id=product_id)
     if not bars:
-        raise RuntimeError(f"No H1 candles returned for {PRODUCT_ID}")
+        raise RuntimeError(f"No H1 candles returned for {product_id}")
     return bars[-count:]
 
 
-def get_ohlc(timeframe: str, limit: int | None = None) -> list[dict[str, float | str]]:
-    """Pull ETH candles for a supported timeframe (M5, H1, H4, H12, D1, W1)."""
+def get_ohlc(
+    timeframe: str,
+    limit: int | None = None,
+    *,
+    product_id: str = PRODUCT_ID,
+) -> list[dict[str, float | str]]:
+    """Pull candles for a supported timeframe (M5, H1, H4, H12, D1, W1)."""
     tf = timeframe.upper()
     if tf not in _TIMEFRAME_CONFIG:
         raise ValueError(f"Unsupported timeframe: {timeframe}. Use one of {list(_TIMEFRAME_CONFIG)}")
@@ -228,26 +246,29 @@ def get_ohlc(timeframe: str, limit: int | None = None) -> list[dict[str, float |
 
     if cfg.get("resample_weekly"):
         fetch_limit = cfg.get("daily_fetch_limit", _MAX_CANDLES)
-        bars = _fetch_coinbase_candles(granularity, fetch_limit)
+        bars = _fetch_coinbase_candles(product_id, granularity, fetch_limit)
         return _resample_weekly(bars, bar_limit)
 
     if cfg.get("resample_h12"):
         h1_count = cfg.get("h1_fetch_bars", bar_limit * 12 + 12)
         if limit is not None:
             h1_count = max(h1_count, bar_limit * 12 + 12)
-        h1_bars = fetch_h1_bars(h1_count)
+        h1_bars = fetch_h1_bars(h1_count, product_id=product_id)
         return _resample_h12(h1_bars, bar_limit)
 
-    bars = _fetch_coinbase_candles(granularity, bar_limit)
+    bars = _fetch_coinbase_candles(product_id, granularity, bar_limit)
     return bars
 
 
-def get_all_timeframes() -> dict[str, list[dict[str, float | str]]]:
+def get_all_timeframes(
+    *,
+    product_id: str = PRODUCT_ID,
+) -> dict[str, list[dict[str, float | str]]]:
     """Fetch OHLC for live strategy timeframes (H4, H1, M5)."""
     return {
-        "H4": get_ohlc("H4"),
-        "H1": get_ohlc("H1"),
-        "M5": get_ohlc("M5"),
+        "H4": get_ohlc("H4", product_id=product_id),
+        "H1": get_ohlc("H1", product_id=product_id),
+        "M5": get_ohlc("M5", product_id=product_id),
     }
 
 
@@ -260,23 +281,40 @@ def to_dataframe(bars: list[dict[str, float | str]]) -> pd.DataFrame:
     )
 
 
-def get_spot_price() -> float:
-    """Latest ETH price from the most recent M5 close."""
-    m5 = get_ohlc("M5", limit=1)
+def get_spot_price(*, product_id: str = PRODUCT_ID) -> float:
+    """Latest price from the most recent M5 close."""
+    m5 = get_ohlc("M5", limit=1, product_id=product_id)
     return float(m5[-1]["close"])
 
 
-def get_live_spot_price() -> float:
-    """Current ETH-USD price from Coinbase public product endpoint."""
-    url = f"{config.MARKET_DATA_API}/products/{PRODUCT_ID}"
+def get_live_spot_price(*, product_id: str = PRODUCT_ID) -> float:
+    """Current product price from Coinbase public product endpoint."""
+    url = f"{config.MARKET_DATA_API}/products/{product_id}"
     response = requests.get(url, timeout=15)
     response.raise_for_status()
     payload = response.json()
     product = payload.get("product") or payload
     price = product.get("price")
     if price is None:
-        raise RuntimeError(f"No price in product response for {PRODUCT_ID}")
+        raise RuntimeError(f"No price in product response for {product_id}")
     return float(price)
+
+
+def get_spot_prices(
+    product_ids: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, float]:
+    """Fetch spot for each traded product (best-effort per product)."""
+    ids = tuple(product_ids or bot_config.TRADED_PRODUCTS)
+    out: dict[str, float] = {}
+    for pid in ids:
+        try:
+            out[pid] = get_spot_price(product_id=pid)
+        except Exception:
+            try:
+                out[pid] = get_live_spot_price(product_id=pid)
+            except Exception:
+                continue
+    return out
 
 
 def apply_live_spot_to_bars(
@@ -303,18 +341,64 @@ def apply_live_spot_to_h1(
     return apply_live_spot_to_bars(h1_bars, spot)
 
 
-def get_daily_bars_for_levels(limit: int = 400) -> list[dict[str, float | str]]:
+def get_daily_bars_for_levels(
+    limit: int = 400,
+    *,
+    product_id: str = PRODUCT_ID,
+) -> list[dict[str, float | str]]:
     """Fetch enough daily candles for calendar key levels (week/month/quarter/year)."""
     if limit <= _MAX_CANDLES:
-        return _fetch_coinbase_candles("ONE_DAY", limit)
+        return _fetch_coinbase_candles(product_id, "ONE_DAY", limit)
 
     end = int(time.time())
     seconds = _GRANULARITY_SECONDS["ONE_DAY"]
     start = end - limit * seconds
-    bars = fetch_coinbase_candles_range("ONE_DAY", start, end)
+    bars = fetch_coinbase_candles_range(
+        "ONE_DAY", start, end, product_id=product_id
+    )
     if not bars:
-        raise RuntimeError(f"No daily candles returned for {PRODUCT_ID}")
+        raise RuntimeError(f"No daily candles returned for {product_id}")
     return bars[-limit:]
+
+
+def build_eth_btc_ratio_bars(
+    eth_bars: list[dict[str, float | str]],
+    btc_bars: list[dict[str, float | str]],
+) -> list[dict[str, float | str]]:
+    """Align ETH and BTC bars by timestamp into an ETH/BTC OHLC ratio series."""
+    btc_by_ts = {str(b["ts"]): b for b in btc_bars}
+    rows: list[dict[str, float | str]] = []
+    for eth in eth_bars:
+        ts = str(eth["ts"])
+        btc = btc_by_ts.get(ts)
+        if btc is None:
+            continue
+        bo, bh, bl, bc = (
+            float(btc["open"]),
+            float(btc["high"]),
+            float(btc["low"]),
+            float(btc["close"]),
+        )
+        if min(bo, bh, bl, bc) <= 0:
+            continue
+        # Conservative OHLC from close-aligned extremes of eth/btc ratios.
+        candidates = [
+            float(eth["open"]) / bo,
+            float(eth["high"]) / bl,
+            float(eth["low"]) / bh,
+            float(eth["close"]) / bc,
+        ]
+        rows.append(
+            {
+                "ts": ts,
+                "open": float(eth["open"]) / bo,
+                "high": max(candidates),
+                "low": min(candidates),
+                "close": float(eth["close"]) / bc,
+                "volume": float(eth.get("volume") or 0) + float(btc.get("volume") or 0),
+            }
+        )
+    return rows
 
 
 if __name__ == "__main__":

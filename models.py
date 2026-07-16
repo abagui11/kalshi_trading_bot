@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class Suggestion:
   action: str  # spot_buy|spot_sell|deriv_buy|deriv_sell|no_trade
-  size: float
+  size: float  # USD notional to deploy; paper positions store qty separately
   entry: float | None
   stop_loss: float | None
   take_profits: list[float] = field(default_factory=list)
@@ -22,9 +22,15 @@ class Suggestion:
   deploy_pct: float | None = None  # override TRADE_DEPLOY_PCT for tranche / add sizing
   entry_tranche: str | None = None  # e.g. "0.25", "0.50", "0.718", "sweep"
   order_block_ref: str | None = None  # links scale-ins to the same M5 OB
+  product_id: str = "ETH-USD"  # Coinbase product, e.g. ETH-USD / BTC-USD
 
   @classmethod
-  def no_trade(cls, rationale: str = "No setup") -> Suggestion:
+  def no_trade(
+    cls,
+    rationale: str = "No setup",
+    *,
+    product_id: str = "ETH-USD",
+  ) -> Suggestion:
     return cls(
       action="no_trade",
       size=0.0,
@@ -34,6 +40,7 @@ class Suggestion:
       risk_reward=None,
       rationale=rationale,
       order_block=None,
+      product_id=product_id,
     )
 
   @classmethod
@@ -43,6 +50,7 @@ class Suggestion:
     structure = data.get("structure_chart")
     entry = data.get("entry_chart")
     deploy_raw = data.get("deploy_pct")
+    product = str(data.get("product_id") or "ETH-USD")
     return cls(
       action=str(data.get("action", "no_trade")),
       size=float(data.get("size", 0) or 0),
@@ -58,4 +66,5 @@ class Suggestion:
       deploy_pct=float(deploy_raw) if deploy_raw is not None else None,
       entry_tranche=str(data["entry_tranche"]) if data.get("entry_tranche") else None,
       order_block_ref=str(data["order_block_ref"]) if data.get("order_block_ref") else None,
+      product_id=product,
     )

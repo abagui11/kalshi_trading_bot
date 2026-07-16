@@ -1,4 +1,4 @@
-"""Paper portfolio tracker — fixed-fraction (TRADE_DEPLOY_PCT) sizing with min/max ETH bounds."""
+"""Paper portfolio tracker — USD notional sizing with per-product qty bounds."""
 
 from __future__ import annotations
 
@@ -19,6 +19,68 @@ logger = logging.getLogger(__name__)
 
 # Close events queued during a paper mutation; flushed after commit.
 _PENDING_OUTCOMES: list[dict] = []
+
+
+def _pos_qty(pos) -> float:
+    """Prefer qty; fall back to eth_qty for legacy rows."""
+    if pos.get("qty") is not None:
+        return float(pos["qty"])
+    return float(pos.get("eth_qty") or 0)
+
+
+def _pos_product(pos) -> str:
+    """Prefer product_id; default ETH-USD."""
+    return str(pos.get("product_id") or "ETH-USD")
+
+
+def _resolve_spots(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """Merge spot dict; apply spot_price to ETH-USD; else fetch from research."""
+    out: dict[str, float] = {}
+    if spots:
+        for key, value in spots.items():
+            try:
+                fv = float(value)
+            except (TypeError, ValueError):
+                continue
+            if fv > 0:
+                out[str(key)] = fv
+    if spot_price is not None:
+        try:
+            fv = float(spot_price)
+            if fv > 0:
+                out["ETH-USD"] = fv
+        except (TypeError, ValueError):
+            pass
+    missing = [pid for pid in bot_config.TRADED_PRODUCTS if pid not in out]
+    if not out or missing:
+        try:
+            import research
+
+            fetched = research.get_spot_prices(
+                missing if out and missing else None
+            )
+            for key, value in fetched.items():
+                try:
+                    fv = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if fv > 0:
+                    out.setdefault(str(key), fv)
+        except Exception:
+            pass
+    return out
+
+
+def _spot_for(product_id: str | None, spots: dict[str, float]) -> float:
+    pid = str(product_id or "ETH-USD")
+    value = spots.get(pid)
+    if value is not None and float(value) > 0:
+        return float(value)
+    return 0.0
+
 
 _STATE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS paper_state (
@@ -113,6 +175,15 @@ CREATE TABLE IF NOT EXISTS paper_epochs (
 );
 """
 
+_CONTRIBUTIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS paper_contributions (
+    telegram_id INTEGER PRIMARY KEY,
+    amount_usd REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    username TEXT
+);
+"""
+
 # Legacy single-position columns on paper_state (migrated to paper_positions).
 _LEGACY_POSITION_COLUMNS: tuple[tuple[str, str], ...] = (
     ("side", "TEXT"),
@@ -149,6 +220,24 @@ def _ensure_trade_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE paper_trades ADD COLUMN position_id INTEGER")
     if "close_reason" not in cols:
         conn.execute("ALTER TABLE paper_trades ADD COLUMN close_reason TEXT")
+    if "product_id" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_trades ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
+        )
+    if "qty" not in cols:
+        conn.execute("ALTER TABLE paper_trades ADD COLUMN qty REAL")
+
+
+def _ensure_trade_archive_columns(conn: sqlite3.Connection) -> None:
+    cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(paper_trades_archive)").fetchall()
+    }
+    if "product_id" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_trades_archive ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
+        )
+    if "qty" not in cols:
+        conn.execute("ALTER TABLE paper_trades_archive ADD COLUMN qty REAL")
 
 
 def _ensure_position_columns(conn: sqlite3.Connection) -> None:
@@ -157,6 +246,64 @@ def _ensure_position_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE paper_positions ADD COLUMN order_block_ref TEXT")
     if "entry_tranches" not in cols:
         conn.execute("ALTER TABLE paper_positions ADD COLUMN entry_tranches TEXT")
+    if "product_id" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_positions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
+        )
+    if "qty" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN qty REAL")
+
+
+def _ensure_position_archive_columns(conn: sqlite3.Connection) -> None:
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(paper_positions_archive)").fetchall()
+    }
+    if "product_id" not in cols:
+        conn.execute(
+            "ALTER TABLE paper_positions_archive ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
+        )
+    if "qty" not in cols:
+        conn.execute("ALTER TABLE paper_positions_archive ADD COLUMN qty REAL")
+
+
+def _ensure_state_contribution_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(paper_state)").fetchall()}
+    if "total_contributed_usd" not in cols:
+        conn.execute("ALTER TABLE paper_state ADD COLUMN total_contributed_usd REAL")
+
+
+def _ensure_house_contribution(conn: sqlite3.Connection, starting_usd: float) -> None:
+    """Seed house stake row and backfill total_contributed_usd when missing."""
+    row = conn.execute(
+        "SELECT total_contributed_usd, starting_usd, cash_usd FROM paper_state WHERE id = 1"
+    ).fetchone()
+    if row is None:
+        return
+
+    total = row["total_contributed_usd"]
+    if total is None:
+        seed = float(row["starting_usd"] if row["starting_usd"] is not None else starting_usd)
+        conn.execute(
+            "UPDATE paper_state SET total_contributed_usd = ? WHERE id = 1",
+            (seed,),
+        )
+        total = seed
+
+    house_id = int(bot_config.HOUSE_CONTRIBUTION_TELEGRAM_ID)
+    existing = conn.execute(
+        "SELECT telegram_id FROM paper_contributions WHERE telegram_id = ?",
+        (house_id,),
+    ).fetchone()
+    if existing is None:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            INSERT INTO paper_contributions (telegram_id, amount_usd, created_at, username)
+            VALUES (?, ?, ?, ?)
+            """,
+            (house_id, float(total), now, "house"),
+        )
 
 
 def _parse_entry_tranches(raw: str | list | None) -> list[str]:
@@ -210,9 +357,9 @@ def _migrate_legacy_position(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
         INSERT INTO paper_positions (
-            open_cycle_id, opened_at, side, action, eth_qty, avg_entry,
+            open_cycle_id, opened_at, side, action, eth_qty, qty, product_id, avg_entry,
             stop_loss, take_profits, risk_reward, suggested_size, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
         """,
         (
             data["open_cycle_id"],
@@ -221,6 +368,8 @@ def _migrate_legacy_position(conn: sqlite3.Connection) -> None:
             side,
             data.get("action") or side,
             eth_qty,
+            eth_qty,
+            "ETH-USD",
             float(data["avg_entry"]),
             float(data["stop_loss"]),
             data.get("take_profits") or "[]",
@@ -248,32 +397,43 @@ def init_db() -> None:
         conn.execute(_TRADES_ARCHIVE_SCHEMA)
         conn.execute(_POSITIONS_ARCHIVE_SCHEMA)
         conn.execute(_EPOCHS_SCHEMA)
+        conn.execute(_CONTRIBUTIONS_SCHEMA)
         _ensure_legacy_columns(conn)
         _ensure_trade_columns(conn)
+        _ensure_trade_archive_columns(conn)
         _ensure_state_epoch_columns(conn)
+        _ensure_state_contribution_columns(conn)
         _ensure_position_columns(conn)
+        _ensure_position_archive_columns(conn)
         row = conn.execute("SELECT id FROM paper_state WHERE id = 1").fetchone()
         if row is None:
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            starting = float(config.PAPER_PORTFOLIO_VALUE)
             conn.execute(
                 """
                 INSERT INTO paper_state (
-                    id, starting_usd, cash_usd, epoch_started_at, epoch_label
+                    id, starting_usd, cash_usd, epoch_started_at, epoch_label,
+                    total_contributed_usd
                 )
-                VALUES (1, ?, ?, ?, ?)
+                VALUES (1, ?, ?, ?, ?, ?)
                 """,
                 (
-                    config.PAPER_PORTFOLIO_VALUE,
-                    config.PAPER_PORTFOLIO_VALUE,
+                    starting,
+                    starting,
                     now,
                     bot_config.PAPER_EPOCH_LABEL,
+                    starting,
                 ),
             )
+        _ensure_house_contribution(conn, float(config.PAPER_PORTFOLIO_VALUE))
         _migrate_legacy_position(conn)
         conn.commit()
 
 
-def get_sizing_basis(spot_price: float | None = None) -> tuple[float, float]:
+def get_sizing_basis(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> tuple[float, float]:
     """Return ``(equity_usd, cash_usd)`` for fixed-fraction trade sizing."""
     init_db()
     with _connect() as conn:
@@ -281,23 +441,20 @@ def get_sizing_basis(spot_price: float | None = None) -> tuple[float, float]:
         cash = float(row["cash_usd"]) if row else config.PAPER_PORTFOLIO_VALUE
         positions = _fetch_open_positions(conn)
 
-    spot = spot_price
-    if spot is None or float(spot) <= 0:
-        try:
-            import research
+    resolved = _resolve_spots(spot_price, spots)
+    if positions and not resolved:
+        # Fall back to first position entry if no spots available.
+        resolved = {_pos_product(positions[0]): float(positions[0]["avg_entry"])}
+    elif positions:
+        for pos in positions:
+            pid = _pos_product(pos)
+            if _spot_for(pid, resolved) <= 0:
+                resolved.setdefault(pid, float(pos["avg_entry"]))
 
-            spot = research.get_spot_price()
-        except Exception:
-            spot = 0.0
-
-    spot_f = float(spot)
-    if spot_f <= 0 and positions:
-        spot_f = float(positions[0]["avg_entry"])
-
-    if spot_f <= 0:
+    if not resolved:
         equity = cash
     else:
-        equity = _equity(cash, positions, spot_f)
+        equity = _equity(cash, positions, resolved)
 
     return max(equity, 0.0), max(cash, 0.0)
 
@@ -305,17 +462,18 @@ def get_sizing_basis(spot_price: float | None = None) -> tuple[float, float]:
 def _equity(
     cash: float,
     positions: list[dict],
-    spot: float,
+    spots: dict[str, float],
 ) -> float:
     total = cash
     for pos in positions:
         side = str(pos["side"])
-        eth_qty = float(pos["eth_qty"])
+        qty = _pos_qty(pos)
         avg_entry = float(pos["avg_entry"])
+        spot = _spot_for(_pos_product(pos), spots)
         if side == "long":
-            total += eth_qty * spot
+            total += qty * spot
         elif side == "short":
-            total += eth_qty * (2 * avg_entry - spot)
+            total += qty * (2 * avg_entry - spot)
     return total
 
 
@@ -328,14 +486,17 @@ def _unrealized_pnl(side: str, eth_qty: float, avg_entry: float, spot: float) ->
 
 
 def _open_eth_qty(suggestion: Suggestion, cash: float) -> float:
-    """Position size from validated suggestion.size, capped by available cash."""
+    """Convert validated USD notional size to asset qty, capped by cash/qty bounds."""
     entry = float(suggestion.entry)  # type: ignore[arg-type]
-    eth_qty = float(suggestion.size)
-    if eth_qty <= 0 or entry <= 0 or cash <= 0:
+    size_usd = float(suggestion.size)
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
+    min_qty, max_qty = bot_config.qty_caps(product_id)
+    if size_usd <= 0 or entry <= 0 or cash <= 0:
         return 0.0
+    eth_qty = size_usd / entry
     max_affordable = cash / entry
-    eth_qty = min(eth_qty, max_affordable, bot_config.MAX_ETH_QTY)
-    if eth_qty < bot_config.MIN_ETH_QTY:
+    eth_qty = min(eth_qty, max_affordable, max_qty)
+    if eth_qty < min_qty:
         return 0.0
     return eth_qty
 
@@ -345,7 +506,7 @@ def _signed_eth_qty(side: str, eth_qty: float) -> float:
 
 
 def _aggregate_signed_qty(positions: list[dict]) -> float:
-    return sum(_signed_eth_qty(str(p["side"]), float(p["eth_qty"])) for p in positions)
+    return sum(_signed_eth_qty(str(p["side"]), _pos_qty(p)) for p in positions)
 
 
 def _close_all_positions(
@@ -355,9 +516,13 @@ def _close_all_positions(
     spot: float,
     cycle_id: str | None,
     reason: str,
+    spots: dict[str, float] | None = None,
 ) -> float:
+    resolved = spots or {"ETH-USD": float(spot)}
     for position in list(positions):
-        cash = _close_position_at_market(conn, cash, position, spot, cycle_id, reason)
+        cash = _close_position_at_market(
+            conn, cash, position, spot, cycle_id, reason, spots=resolved
+        )
     return cash
 
 
@@ -439,6 +604,12 @@ def _render_outcome_chart(event: dict) -> None:
         order_block=order_block,
         structure_chart=suggestion_data.get("structure_chart") or "H4",
         entry_chart=suggestion_data.get("entry_chart") or "M5",
+        product_id=str(
+            event.get("product_id")
+            or (row or {}).get("product_id")
+            or suggestion_data.get("product_id")
+            or "ETH-USD"
+        ),
     )
 
     key_levels = []
@@ -453,10 +624,11 @@ def _render_outcome_chart(event: dict) -> None:
         except Exception:
             logger.debug("could not rebuild market context for outcome charts", exc_info=True)
 
+    product_id = suggestion.product_id or "ETH-USD"
     data = {
-        "H4": research.get_ohlc("H4"),
-        "H1": research.get_ohlc("H1"),
-        "M5": research.get_ohlc("M5"),
+        "H4": research.get_ohlc("H4", product_id=product_id),
+        "H1": research.get_ohlc("H1", product_id=product_id),
+        "M5": research.get_ohlc("M5", product_id=product_id),
     }
     charts_mod.build_outcome_charts(
         suggestion,
@@ -481,15 +653,19 @@ def _reduce_position(
     spot: float,
     cycle_id: str | None,
     reason: str,
+    spots: dict[str, float] | None = None,
 ) -> float:
     side = str(position["side"])
-    eth_qty = float(position["eth_qty"])
+    eth_qty = _pos_qty(position)
+    product_id = _pos_product(position)
+    min_qty, _ = bot_config.qty_caps(product_id)
     close_qty = min(close_qty, eth_qty)
     if close_qty <= 0:
         return cash
 
     avg_entry = float(position["avg_entry"])
     pos_id = int(position["id"])
+    resolved = spots or {product_id: float(spot)}
 
     if side == "long":
         cash += close_qty * spot
@@ -497,18 +673,31 @@ def _reduce_position(
         cash += close_qty * (2 * avg_entry - spot)
 
     remaining = eth_qty - close_qty
-    if remaining < bot_config.MIN_ETH_QTY:
+    if remaining < min_qty:
         position["eth_qty"] = eth_qty
-        return _close_position_at_market(conn, cash, position, spot, cycle_id, reason)
+        position["qty"] = eth_qty
+        return _close_position_at_market(
+            conn, cash, position, spot, cycle_id, reason, spots=resolved
+        )
 
     conn.execute(
-        "UPDATE paper_positions SET eth_qty = ? WHERE id = ?",
-        (remaining, pos_id),
+        "UPDATE paper_positions SET eth_qty = ?, qty = ? WHERE id = ?",
+        (remaining, remaining, pos_id),
     )
     open_positions = _fetch_open_positions(conn)
-    equity = _equity(cash, open_positions, spot)
+    equity = _equity(cash, open_positions, resolved)
     _log_trade(
-        conn, "close", cycle_id, side, close_qty, spot, cash, equity, pos_id, reason
+        conn,
+        "close",
+        cycle_id,
+        side,
+        close_qty,
+        spot,
+        cash,
+        equity,
+        pos_id,
+        reason,
+        product_id=product_id,
     )
     return cash
 
@@ -521,13 +710,16 @@ def _reduce_positions_fifo(
     spot: float,
     cycle_id: str | None,
     reason: str,
+    spots: dict[str, float] | None = None,
 ) -> float:
     remaining = reduce_qty
     for position in positions:
         if remaining <= 0:
             break
-        take = min(float(position["eth_qty"]), remaining)
-        cash = _reduce_position(conn, cash, position, take, spot, cycle_id, reason)
+        take = min(_pos_qty(position), remaining)
+        cash = _reduce_position(
+            conn, cash, position, take, spot, cycle_id, reason, spots=spots
+        )
         remaining -= take
     return cash
 
@@ -578,14 +770,17 @@ def _add_to_net_position(
     add_qty: float,
     spot: float,
     cycle_id: str | None,
+    spots: dict[str, float] | None = None,
 ) -> float:
     entry = float(suggestion.entry)  # type: ignore[arg-type]
     if add_qty <= 0:
         return cash
 
-    old_qty = float(position["eth_qty"])
-    room = bot_config.MAX_ETH_QTY - old_qty
-    if room < bot_config.MIN_ETH_QTY:
+    product_id = _pos_product(position)
+    min_qty, max_qty = bot_config.qty_caps(product_id)
+    old_qty = _pos_qty(position)
+    room = max_qty - old_qty
+    if room < min_qty:
         return cash
     add_qty = min(add_qty, room)
 
@@ -598,6 +793,7 @@ def _add_to_net_position(
     new_avg = (old_qty * old_entry + add_qty * entry) / new_qty
     side = str(position["side"])
     pos_id = int(position["id"])
+    resolved = spots or {product_id: float(spot)}
     tranches = _merge_entry_tranches(
         _parse_entry_tranches(position.get("entry_tranches")),
         suggestion.entry_tranche,
@@ -615,13 +811,14 @@ def _add_to_net_position(
     conn.execute(
         """
         UPDATE paper_positions
-        SET eth_qty = ?, avg_entry = ?, stop_loss = ?, take_profits = ?,
+        SET eth_qty = ?, qty = ?, avg_entry = ?, stop_loss = ?, take_profits = ?,
             risk_reward = ?, suggested_size = ?, action = ?, open_cycle_id = ?,
             order_block_ref = ?,
             entry_tranches = ?
         WHERE id = ?
         """,
         (
+            new_qty,
             new_qty,
             new_avg,
             stop,
@@ -636,8 +833,20 @@ def _add_to_net_position(
         ),
     )
     open_positions = _fetch_open_positions(conn)
-    equity = _equity(cash, open_positions, spot)
-    _log_trade(conn, "open", cycle_id, side, add_qty, entry, cash, equity, pos_id, None)
+    equity = _equity(cash, open_positions, resolved)
+    _log_trade(
+        conn,
+        "open",
+        cycle_id,
+        side,
+        add_qty,
+        entry,
+        cash,
+        equity,
+        pos_id,
+        None,
+        product_id=product_id,
+    )
     return cash
 
 
@@ -661,8 +870,12 @@ def _apply_trade_with_netting(
     suggestion: Suggestion,
     spot: float,
     cycle_id: str | None,
+    spots: dict[str, float] | None = None,
 ) -> float:
     """Reconcile incoming trade against open exposure (Option A: immediate net at spot)."""
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
+    min_qty, _ = bot_config.qty_caps(product_id)
+    resolved = spots or {product_id: float(spot)}
     incoming_qty = _open_eth_qty(suggestion, cash)
     if incoming_qty <= 0:
         return cash
@@ -670,24 +883,33 @@ def _apply_trade_with_netting(
     incoming_signed = (
         incoming_qty if suggestion.action in LONG_ACTIONS else -incoming_qty
     )
-    positions = _fetch_open_positions(conn)
+    all_positions = _fetch_open_positions(conn)
+    positions = [p for p in all_positions if _pos_product(p) == product_id]
     current_signed = _aggregate_signed_qty(positions)
     target_signed = current_signed + incoming_signed
 
     if not positions:
-        return _open_position(conn, cash, suggestion, spot, cycle_id)
+        return _open_position(
+            conn, cash, suggestion, spot, cycle_id, spots=resolved
+        )
 
-    if abs(target_signed) < bot_config.MIN_ETH_QTY:
-        return _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+    if abs(target_signed) < min_qty:
+        return _close_all_positions(
+            conn, cash, positions, spot, cycle_id, "signal_net", spots=resolved
+        )
 
     if target_signed == 0:
-        return _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+        return _close_all_positions(
+            conn, cash, positions, spot, cycle_id, "signal_net", spots=resolved
+        )
 
     current_side = "long" if current_signed > 0 else "short"
     target_side = "long" if target_signed > 0 else "short"
 
     if target_side != current_side:
-        cash = _close_all_positions(conn, cash, positions, spot, cycle_id, "signal_net")
+        cash = _close_all_positions(
+            conn, cash, positions, spot, cycle_id, "signal_net", spots=resolved
+        )
         return _open_position(
             conn,
             cash,
@@ -695,6 +917,7 @@ def _apply_trade_with_netting(
             spot,
             cycle_id,
             eth_qty_override=abs(target_signed),
+            spots=resolved,
         )
 
     if abs(target_signed) > abs(current_signed):
@@ -708,6 +931,7 @@ def _apply_trade_with_netting(
                 spot,
                 cycle_id,
                 eth_qty_override=abs(target_signed),
+                spots=resolved,
             )
         target_pos = _match_position_for_add(same_side, suggestion)
         if target_pos is None:
@@ -719,16 +943,31 @@ def _apply_trade_with_netting(
                 spot,
                 cycle_id,
                 eth_qty_override=add_qty,
+                spots=resolved,
             )
         return _add_to_net_position(
-            conn, cash, target_pos, suggestion, add_qty, spot, cycle_id
+            conn,
+            cash,
+            target_pos,
+            suggestion,
+            add_qty,
+            spot,
+            cycle_id,
+            spots=resolved,
         )
 
     if abs(target_signed) < abs(current_signed):
         reduce_qty = abs(current_signed) - abs(target_signed)
         same_side = [p for p in positions if str(p["side"]) == current_side]
         return _reduce_positions_fifo(
-            conn, cash, same_side, reduce_qty, spot, cycle_id, "signal_net"
+            conn,
+            cash,
+            same_side,
+            reduce_qty,
+            spot,
+            cycle_id,
+            "signal_net",
+            spots=resolved,
         )
 
     _update_position_metadata(conn, positions[0], suggestion, cycle_id)
@@ -750,6 +989,14 @@ def _row_to_position(row: sqlite3.Row | dict) -> dict:
     pos = dict(row)
     pos["take_profits"] = _parse_take_profits(pos.get("take_profits"))
     pos["entry_tranches"] = _parse_entry_tranches(pos.get("entry_tranches"))
+    product_id = str(pos.get("product_id") or "ETH-USD")
+    pos["product_id"] = product_id
+    qty = pos.get("qty")
+    if qty is None:
+        qty = pos.get("eth_qty") or 0
+    qty_f = float(qty)
+    pos["qty"] = qty_f
+    pos["eth_qty"] = qty_f
     return pos
 
 
@@ -764,21 +1011,18 @@ def _fetch_open_positions(conn: sqlite3.Connection) -> list[dict]:
     return [_row_to_position(row) for row in rows]
 
 
-def get_open_positions(spot_price: float | None = None) -> list[dict]:
+def get_open_positions(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> list[dict]:
     """Return all open paper positions enriched with spot and unrealized P&L."""
     init_db()
-    spot = spot_price
-    if spot is None:
+    resolved = _resolve_spots(spot_price, spots)
+    if not resolved:
         state = get_state()
-        spot = state.get("last_spot")
-    if spot is None or float(spot) <= 0:
-        try:
-            import research
-
-            spot = research.get_spot_price()
-        except Exception:
-            spot = 0.0
-    spot_f = float(spot)
+        last = state.get("last_spot")
+        if last is not None and float(last) > 0:
+            resolved = {"ETH-USD": float(last)}
 
     with _connect() as conn:
         positions = _fetch_open_positions(conn)
@@ -787,12 +1031,19 @@ def get_open_positions(spot_price: float | None = None) -> list[dict]:
     enriched: list[dict] = []
     for pos in positions:
         side = str(pos["side"])
-        eth_qty = float(pos["eth_qty"])
+        eth_qty = _pos_qty(pos)
         avg_entry = float(pos["avg_entry"])
+        product_id = _pos_product(pos)
+        spot_f = _spot_for(product_id, resolved)
+        if spot_f <= 0:
+            spot_f = avg_entry
         unrealized = _unrealized_pnl(side, eth_qty, avg_entry, spot_f)
         enriched.append(
             {
                 **pos,
+                "product_id": product_id,
+                "qty": eth_qty,
+                "eth_qty": eth_qty,
                 "spot": spot_f,
                 "unrealized_pnl_usd": unrealized,
                 "starting_usd": starting,
@@ -814,6 +1065,8 @@ def get_state() -> dict:
         first = positions[0]
         state["side"] = first["side"]
         state["eth_qty"] = first["eth_qty"]
+        state["qty"] = first.get("qty", first["eth_qty"])
+        state["product_id"] = first.get("product_id", "ETH-USD")
         state["avg_entry"] = first["avg_entry"]
         state["action"] = first.get("action")
         state["stop_loss"] = first.get("stop_loss")
@@ -825,6 +1078,8 @@ def get_state() -> dict:
     else:
         state["side"] = "flat"
         state["eth_qty"] = 0.0
+        state["qty"] = 0.0
+        state["product_id"] = None
         state["avg_entry"] = None
         state["action"] = None
         state["stop_loss"] = None
@@ -841,17 +1096,23 @@ def is_open(state: dict | None = None) -> bool:
     return int(state.get("open_count") or 0) > 0
 
 
-def get_open_position(spot_price: float | None = None) -> dict | None:
+def get_open_position(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> dict | None:
     """Return the oldest open position, or None if flat."""
-    positions = get_open_positions(spot_price)
+    positions = get_open_positions(spot_price, spots=spots)
     if not positions:
         return None
     pos = positions[0]
     starting = float(pos["starting_usd"])
     cash = float(get_state()["cash_usd"])
-    spot_f = float(pos["spot"])
-    all_open = get_open_positions(spot_f)
-    equity = _equity(cash, all_open, spot_f)
+    resolved = _resolve_spots(spot_price, spots)
+    for p in positions:
+        pid = _pos_product(p)
+        if _spot_for(pid, resolved) <= 0:
+            resolved[pid] = float(p["spot"])
+    equity = _equity(cash, positions, resolved)
     return {
         **pos,
         "equity_usd": equity,
@@ -897,21 +1158,22 @@ def _format_exit_plan(position: dict) -> str:
 def _format_single_position(position: dict, index: int | None = None) -> str:
     side = str(position["side"])
     action = str(position.get("action") or side).upper()
-    eth_qty = float(position["eth_qty"])
+    eth_qty = _pos_qty(position)
     entry = float(position["avg_entry"])
     spot = float(position["spot"])
     unrealized = float(position["unrealized_pnl_usd"])
     sign = "+" if unrealized >= 0 else ""
+    label_asset = bot_config.product_label(_pos_product(position))
 
-    label = "Long ETH" if side == "long" else "Short ETH"
+    label = f"Long {label_asset}" if side == "long" else f"Short {label_asset}"
     prefix = f"Position {index}: " if index is not None else "Open position: "
     lines = [
         f"{prefix}{action} ({label})",
         f"Entered: {position.get('opened_at') or 'unknown'} (cycle {position.get('open_cycle_id') or 'n/a'})",
-        f"Size: {eth_qty:.4f} ETH",
+        f"Size: ${eth_qty * entry:,.2f} ({eth_qty:.4f} {label_asset})",
     ]
     if position.get("suggested_size") is not None:
-        lines[-1] += f" (suggested {float(position['suggested_size']):.2f})"
+        lines[-1] += f" (suggested ${float(position['suggested_size']):,.2f})"
     lines.extend(
         [
             f"Entry: ${entry:,.2f}",
@@ -979,7 +1241,7 @@ def _pair_closed_trades(rows: list[dict]) -> list[dict]:
 
         entry = float(opened["price"])
         exit_price = float(row["price"])
-        qty = float(opened["eth_qty"])
+        qty = float(opened.get("qty") if opened.get("qty") is not None else opened["eth_qty"])
         if side == "long":
             realized_pnl = qty * (exit_price - entry)
         else:
@@ -991,6 +1253,12 @@ def _pair_closed_trades(rows: list[dict]) -> list[dict]:
                 "open_cycle_id": opened.get("cycle_id"),
                 "close_cycle_id": row.get("cycle_id"),
                 "eth_qty": qty,
+                "qty": qty,
+                "product_id": str(
+                    row.get("product_id")
+                    or opened.get("product_id")
+                    or "ETH-USD"
+                ),
                 "entry": entry,
                 "exit": exit_price,
                 "opened_at": opened.get("ts"),
@@ -1085,8 +1353,11 @@ def format_closed_trades_detail(limit: int = 5) -> str | None:
         else:
             pnl_str = f"-${abs(pnl):,.2f} ({pnl_pct:.2f}%)"
         reason = trade.get("close_reason") or "market"
+        asset = bot_config.product_label(
+            str(trade.get("product_id") or "ETH-USD")
+        )
         lines.append(
-            f"{idx}. {action.upper()} {float(trade['eth_qty']):.4f} ETH "
+            f"{idx}. {action.upper()} {float(trade['eth_qty']):.4f} {asset} "
             f"@ ${float(trade['entry']):,.2f} -> ${float(trade['exit']):,.2f} "
             f"| realized {pnl_str} | closed via {reason} "
             f"| opened {trade.get('opened_at')} (cycle {open_cycle_id}) "
@@ -1107,17 +1378,32 @@ def _log_trade(
     equity: float,
     position_id: int | None = None,
     close_reason: str | None = None,
+    product_id: str | None = None,
 ) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pid = product_id or "ETH-USD"
     conn.execute(
         """
         INSERT INTO paper_trades (
-            ts, cycle_id, event, side, eth_qty, price, cash_usd, equity_usd,
+            ts, cycle_id, event, side, eth_qty, qty, product_id, price, cash_usd, equity_usd,
             position_id, close_reason
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (ts, cycle_id, event, side, eth_qty, price, cash, equity, position_id, close_reason),
+        (
+            ts,
+            cycle_id,
+            event,
+            side,
+            eth_qty,
+            eth_qty,
+            pid,
+            price,
+            cash,
+            equity,
+            position_id,
+            close_reason,
+        ),
     )
 
 
@@ -1128,11 +1414,14 @@ def _close_position_at_market(
     spot: float,
     cycle_id: str | None,
     reason: str,
+    spots: dict[str, float] | None = None,
 ) -> float:
     side = str(position["side"])
-    eth_qty = float(position["eth_qty"])
+    eth_qty = _pos_qty(position)
     avg_entry = float(position["avg_entry"])
     pos_id = int(position["id"])
+    product_id = _pos_product(position)
+    resolved = spots or {product_id: float(spot)}
 
     if side == "long":
         cash += eth_qty * spot
@@ -1144,14 +1433,24 @@ def _close_position_at_market(
         pnl_usd = 0.0
 
     open_positions = [p for p in _fetch_open_positions(conn) if int(p["id"]) != pos_id]
-    equity = _equity(cash, open_positions, spot)
+    equity = _equity(cash, open_positions, resolved)
     conn.execute(
         "UPDATE paper_positions SET status = 'closed' WHERE id = ?",
         (pos_id,),
     )
     closed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _log_trade(
-        conn, "close", cycle_id, side, eth_qty, spot, cash, equity, pos_id, reason
+        conn,
+        "close",
+        cycle_id,
+        side,
+        eth_qty,
+        spot,
+        cash,
+        equity,
+        pos_id,
+        reason,
+        product_id=product_id,
     )
     notional = eth_qty * avg_entry
     _queue_outcome_chart(
@@ -1161,9 +1460,11 @@ def _close_position_at_market(
             "closed_at": closed_at,
             "side": side,
             "action": position.get("action"),
+            "product_id": product_id,
             "entry": avg_entry,
             "exit": spot,
             "eth_qty": eth_qty,
+            "qty": eth_qty,
             "stop_loss": position.get("stop_loss"),
             "take_profits": list(position.get("take_profits") or []),
             "close_reason": reason,
@@ -1191,18 +1492,26 @@ def _tp_hit(side: str, spot: float, take_profits: list[float]) -> bool:
 def _check_sl_tp_closes(
     conn: sqlite3.Connection,
     cash: float,
-    spot: float,
+    spots: dict[str, float],
     cycle_id: str | None,
 ) -> float:
     for position in list(_fetch_open_positions(conn)):
         side = str(position["side"])
+        product_id = _pos_product(position)
+        spot = _spot_for(product_id, spots)
+        if spot <= 0:
+            continue
         sl = float(position["stop_loss"])
         tps = position.get("take_profits") or []
         if _sl_hit(side, spot, sl):
-            cash = _close_position_at_market(conn, cash, position, sl, cycle_id, "stop_loss")
+            cash = _close_position_at_market(
+                conn, cash, position, sl, cycle_id, "stop_loss", spots=spots
+            )
         elif _tp_hit(side, spot, tps):
             tp_price = min(tps) if side == "long" else max(tps)
-            cash = _close_position_at_market(conn, cash, position, tp_price, cycle_id, "take_profit")
+            cash = _close_position_at_market(
+                conn, cash, position, tp_price, cycle_id, "take_profit", spots=spots
+            )
     return cash
 
 
@@ -1214,9 +1523,13 @@ def _open_position(
     cycle_id: str | None,
     *,
     eth_qty_override: float | None = None,
+    spots: dict[str, float] | None = None,
 ) -> float:
     entry = float(suggestion.entry)  # type: ignore[arg-type]
     stop = float(suggestion.stop_loss)  # type: ignore[arg-type]
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
+    min_qty, max_qty = bot_config.qty_caps(product_id)
+    resolved = spots or {product_id: float(spot)}
     eth_qty = (
         eth_qty_override
         if eth_qty_override is not None
@@ -1226,8 +1539,8 @@ def _open_position(
         if eth_qty <= 0 or entry <= 0 or cash <= 0:
             return cash
         max_affordable = cash / entry
-        eth_qty = min(eth_qty, max_affordable, bot_config.MAX_ETH_QTY)
-        if eth_qty < bot_config.MIN_ETH_QTY:
+        eth_qty = min(eth_qty, max_affordable, max_qty)
+        if eth_qty < min_qty:
             return cash
     elif eth_qty <= 0:
         return cash
@@ -1240,10 +1553,10 @@ def _open_position(
     cursor = conn.execute(
         """
         INSERT INTO paper_positions (
-            open_cycle_id, opened_at, side, action, eth_qty, avg_entry,
+            open_cycle_id, opened_at, side, action, eth_qty, qty, product_id, avg_entry,
             stop_loss, take_profits, risk_reward, suggested_size, status,
             order_block_ref, entry_tranches
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
         """,
         (
             cycle_id,
@@ -1251,6 +1564,8 @@ def _open_position(
             side,
             suggestion.action,
             eth_qty,
+            eth_qty,
+            product_id,
             entry,
             stop,
             json.dumps(suggestion.take_profits),
@@ -1262,25 +1577,47 @@ def _open_position(
     )
     pos_id = int(cursor.lastrowid)
     positions = _fetch_open_positions(conn)
-    equity = _equity(cash, positions, spot)
-    _log_trade(conn, "open", cycle_id, side, eth_qty, entry, cash, equity, pos_id, None)
+    equity = _equity(cash, positions, resolved)
+    _log_trade(
+        conn,
+        "open",
+        cycle_id,
+        side,
+        eth_qty,
+        entry,
+        cash,
+        equity,
+        pos_id,
+        None,
+        product_id=product_id,
+    )
     return cash
 
 
-def update(suggestion: Suggestion, spot_price: float, cycle_id: str | None = None) -> dict:
+def update(
+    suggestion: Suggestion,
+    spot_price: float,
+    cycle_id: str | None = None,
+    spots: dict[str, float] | None = None,
+) -> dict:
     """Apply latest suggestion to paper portfolio. Returns updated state dict."""
     init_db()
     _PENDING_OUTCOMES.clear()
+    resolved = _resolve_spots(spot_price, spots)
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
+    trade_spot = _spot_for(product_id, resolved)
+    if trade_spot <= 0:
+        trade_spot = float(spot_price)
     try:
         with _connect() as conn:
             state = dict(conn.execute("SELECT * FROM paper_state WHERE id = 1").fetchone())
             cash = float(state["cash_usd"])
 
-            cash = _check_sl_tp_closes(conn, cash, spot_price, cycle_id)
+            cash = _check_sl_tp_closes(conn, cash, resolved, cycle_id)
 
             if suggestion.action in TRADE_ACTIONS:
                 cash = _apply_trade_with_netting(
-                    conn, cash, suggestion, spot_price, cycle_id
+                    conn, cash, suggestion, trade_spot, cycle_id, spots=resolved
                 )
 
             conn.execute(
@@ -1289,7 +1626,7 @@ def update(suggestion: Suggestion, spot_price: float, cycle_id: str | None = Non
                 SET cash_usd = ?, last_cycle_id = ?, last_spot = ?
                 WHERE id = 1
                 """,
-                (cash, cycle_id, spot_price),
+                (cash, cycle_id, float(spot_price)),
             )
             conn.commit()
     finally:
@@ -1325,13 +1662,16 @@ def archive_epoch_and_reset(
 
         for row in trade_rows:
             data = dict(row)
+            qty = data.get("qty")
+            if qty is None:
+                qty = data.get("eth_qty")
             conn.execute(
                 """
                 INSERT INTO paper_trades_archive (
-                    source_id, ts, cycle_id, event, side, eth_qty, price,
+                    source_id, ts, cycle_id, event, side, eth_qty, qty, product_id, price,
                     cash_usd, equity_usd, position_id, close_reason,
                     archived_at, epoch_label
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["id"],
@@ -1340,6 +1680,8 @@ def archive_epoch_and_reset(
                     data["event"],
                     data.get("side"),
                     data.get("eth_qty"),
+                    qty,
+                    data.get("product_id") or "ETH-USD",
                     data.get("price"),
                     data.get("cash_usd"),
                     data.get("equity_usd"),
@@ -1352,13 +1694,16 @@ def archive_epoch_and_reset(
 
         for row in position_rows:
             data = dict(row)
+            qty = data.get("qty")
+            if qty is None:
+                qty = data.get("eth_qty")
             conn.execute(
                 """
                 INSERT INTO paper_positions_archive (
-                    source_id, open_cycle_id, opened_at, side, action, eth_qty,
-                    avg_entry, stop_loss, take_profits, risk_reward, suggested_size,
-                    status, archived_at, epoch_label
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    source_id, open_cycle_id, opened_at, side, action, eth_qty, qty,
+                    product_id, avg_entry, stop_loss, take_profits, risk_reward,
+                    suggested_size, status, archived_at, epoch_label
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["id"],
@@ -1367,6 +1712,8 @@ def archive_epoch_and_reset(
                     data["side"],
                     data["action"],
                     data["eth_qty"],
+                    qty,
+                    data.get("product_id") or "ETH-USD",
                     data["avg_entry"],
                     data["stop_loss"],
                     data["take_profits"],
@@ -1397,14 +1744,27 @@ def archive_epoch_and_reset(
 
         conn.execute("DELETE FROM paper_trades")
         conn.execute("DELETE FROM paper_positions")
+        conn.execute("DELETE FROM paper_contributions")
         conn.execute(
             """
             UPDATE paper_state
             SET starting_usd = ?, cash_usd = ?, last_cycle_id = NULL, last_spot = NULL,
-                epoch_started_at = ?, epoch_label = ?
+                epoch_started_at = ?, epoch_label = ?, total_contributed_usd = ?
             WHERE id = 1
             """,
-            (starting, starting, archived_at, new_label),
+            (starting, starting, archived_at, new_label, starting),
+        )
+        conn.execute(
+            """
+            INSERT INTO paper_contributions (telegram_id, amount_usd, created_at, username)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                int(bot_config.HOUSE_CONTRIBUTION_TELEGRAM_ID),
+                starting,
+                archived_at,
+                "house",
+            ),
         )
         conn.commit()
 
@@ -1436,10 +1796,14 @@ def restore_open_position(
     open_cycle_id: str,
     spot_price: float,
     force: bool = False,
+    product_id: str = "ETH-USD",
 ) -> dict:
     """Manually set an open paper position (e.g. backfill after a missed broadcast)."""
     init_db()
     _PENDING_OUTCOMES.clear()
+    product_id = product_id or "ETH-USD"
+    min_qty, max_qty = bot_config.qty_caps(product_id)
+    spots = _resolve_spots(spot_price, {product_id: float(spot_price)})
     try:
         with _connect() as conn:
             positions = _fetch_open_positions(conn)
@@ -1458,20 +1822,38 @@ def restore_open_position(
             state = dict(conn.execute("SELECT * FROM paper_state WHERE id = 1").fetchone())
             cash = float(state["cash_usd"])
             side = "long" if action in LONG_ACTIONS else "short"
-            eth_qty = max(bot_config.MIN_ETH_QTY, min(bot_config.MAX_ETH_QTY, eth_qty))
+            eth_qty = max(min_qty, min(max_qty, eth_qty))
             notional = eth_qty * entry
 
             if force and positions:
                 for pos in list(_fetch_open_positions(conn)):
+                    pos_spot = _spot_for(_pos_product(pos), spots)
+                    if pos_spot <= 0:
+                        pos_spot = float(spot_price)
                     cash = _close_position_at_market(
-                        conn, cash, pos, spot_price, open_cycle_id, "restore_force"
+                        conn,
+                        cash,
+                        pos,
+                        pos_spot,
+                        open_cycle_id,
+                        "restore_force",
+                        spots=spots,
                     )
                 positions = []
 
             if len(positions) >= bot_config.MAX_OPEN_TRADES:
                 oldest = positions[0]
+                oldest_spot = _spot_for(_pos_product(oldest), spots)
+                if oldest_spot <= 0:
+                    oldest_spot = float(spot_price)
                 cash = _close_position_at_market(
-                    conn, cash, oldest, spot_price, open_cycle_id, "fifo_max_positions"
+                    conn,
+                    cash,
+                    oldest,
+                    oldest_spot,
+                    open_cycle_id,
+                    "fifo_max_positions",
+                    spots=spots,
                 )
 
             if cash < notional:
@@ -1483,9 +1865,9 @@ def restore_open_position(
             cursor = conn.execute(
                 """
                 INSERT INTO paper_positions (
-                    open_cycle_id, opened_at, side, action, eth_qty, avg_entry,
-                    stop_loss, take_profits, risk_reward, suggested_size, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+                    open_cycle_id, opened_at, side, action, eth_qty, qty, product_id,
+                    avg_entry, stop_loss, take_profits, risk_reward, suggested_size, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
                 """,
                 (
                     open_cycle_id,
@@ -1493,6 +1875,8 @@ def restore_open_position(
                     side,
                     action,
                     eth_qty,
+                    eth_qty,
+                    product_id,
                     entry,
                     stop_loss,
                     json.dumps(take_profits),
@@ -1502,9 +1886,19 @@ def restore_open_position(
             )
             pos_id = int(cursor.lastrowid)
             all_open = _fetch_open_positions(conn)
-            equity = _equity(cash, all_open, spot_price)
+            equity = _equity(cash, all_open, spots)
             _log_trade(
-                conn, "open", open_cycle_id, side, eth_qty, entry, cash, equity, pos_id, None
+                conn,
+                "open",
+                open_cycle_id,
+                side,
+                eth_qty,
+                entry,
+                cash,
+                equity,
+                pos_id,
+                None,
+                product_id=product_id,
             )
             conn.execute(
                 "UPDATE paper_state SET cash_usd = ?, last_cycle_id = ?, last_spot = ? WHERE id = 1",
@@ -1517,23 +1911,28 @@ def restore_open_position(
     return get_state()
 
 
-def format_pnl_footer(spot_price: float | None = None) -> str:
+def format_pnl_footer(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> str:
     """One-line paper PnL summary for Telegram messages."""
     state = get_state()
-    spot = spot_price if spot_price is not None else state.get("last_spot")
-    if spot is None or float(spot) <= 0:
-        try:
-            import research
-
-            spot = research.get_spot_price()
-        except Exception:
-            spot = 0.0
+    resolved = _resolve_spots(spot_price, spots)
+    if not resolved:
+        last = state.get("last_spot")
+        if last is not None and float(last) > 0:
+            resolved = {"ETH-USD": float(last)}
 
     starting = float(state["starting_usd"])
     cash = float(state["cash_usd"])
-    positions = get_open_positions(float(spot))
+    positions = get_open_positions(spot_price, spots=resolved)
 
-    equity = _equity(cash, positions, float(spot))
+    for pos in positions:
+        pid = _pos_product(pos)
+        if _spot_for(pid, resolved) <= 0:
+            resolved[pid] = float(pos["spot"])
+
+    equity = _equity(cash, positions, resolved) if resolved else cash
     pnl = equity - starting
     pnl_pct = (pnl / starting * 100) if starting else 0.0
 
@@ -1542,15 +1941,151 @@ def format_pnl_footer(spot_price: float | None = None) -> str:
     elif len(positions) == 1:
         p = positions[0]
         side = str(p["side"])
+        asset = bot_config.product_label(_pos_product(p))
         if side == "long":
-            pos = f"Long {float(p['eth_qty']):.4f} ETH @ {float(p['avg_entry']):,.2f}"
+            pos = f"Long {_pos_qty(p):.4f} {asset} @ {float(p['avg_entry']):,.2f}"
         else:
-            pos = f"Short {float(p['eth_qty']):.4f} ETH @ {float(p['avg_entry']):,.2f}"
+            pos = f"Short {_pos_qty(p):.4f} {asset} @ {float(p['avg_entry']):,.2f}"
     else:
         pos = f"{len(positions)} open positions"
+
+    display_spot = _spot_for("ETH-USD", resolved)
+    if display_spot <= 0 and positions:
+        display_spot = float(positions[0]["spot"])
 
     sign = "+" if pnl >= 0 else ""
     return (
         f"Paper PnL (${starting:,.0f} start): ${equity:,.2f} ({sign}{pnl_pct:.2f}%) "
-        f"| {pos} | Spot: ${float(spot):,.2f}"
+        f"| {pos} | Spot: ${display_spot:,.2f}"
     )
+
+
+def fund_user(telegram_id: int, username: str | None = None) -> dict:
+    """One-time fake deposit of PAPER_CONTRIBUTION_USD. Returns status dict."""
+    init_db()
+    amount = float(bot_config.PAPER_CONTRIBUTION_USD)
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT * FROM paper_contributions WHERE telegram_id = ?",
+            (int(telegram_id),),
+        ).fetchone()
+        if existing is not None:
+            total = float(
+                conn.execute(
+                    "SELECT total_contributed_usd FROM paper_state WHERE id = 1"
+                ).fetchone()[0]
+                or 0
+            )
+            share = (
+                (float(existing["amount_usd"]) / total * 100) if total > 0 else 0.0
+            )
+            return {
+                "ok": False,
+                "reason": "already_funded",
+                "amount": float(existing["amount_usd"]),
+                "amount_usd": float(existing["amount_usd"]),
+                "share_pct": share,
+                "username": existing["username"],
+            }
+
+        state = dict(conn.execute("SELECT * FROM paper_state WHERE id = 1").fetchone())
+        cash = float(state["cash_usd"]) + amount
+        starting = float(state["starting_usd"]) + amount
+        total = float(state.get("total_contributed_usd") or 0) + amount
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute(
+            """
+            INSERT INTO paper_contributions (telegram_id, amount_usd, created_at, username)
+            VALUES (?, ?, ?, ?)
+            """,
+            (int(telegram_id), amount, now, username),
+        )
+        conn.execute(
+            """
+            UPDATE paper_state
+            SET cash_usd = ?, starting_usd = ?, total_contributed_usd = ?
+            WHERE id = 1
+            """,
+            (cash, starting, total),
+        )
+        conn.commit()
+
+    share_pct = (amount / total * 100) if total > 0 else 0.0
+    return {
+        "ok": True,
+        "amount": amount,
+        "amount_usd": amount,
+        "share_pct": share_pct,
+        "cash_usd": cash,
+        "total_contributed_usd": total,
+    }
+
+
+def get_contribution(telegram_id: int) -> dict | None:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_contributions WHERE telegram_id = ?",
+            (int(telegram_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_contributions() -> list[dict]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM paper_contributions ORDER BY created_at ASC, telegram_id ASC"
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def total_contributed() -> float:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT total_contributed_usd FROM paper_state WHERE id = 1"
+        ).fetchone()
+    if row and row["total_contributed_usd"] is not None:
+        return float(row["total_contributed_usd"])
+    return sum(float(c["amount_usd"]) for c in list_contributions())
+
+
+def get_user_metrics(
+    telegram_id: int,
+    spots: dict[str, float] | None = None,
+) -> dict:
+    """Ownership %, equity $, pnl $, pnl %. If not funded, ok=False."""
+    init_db()
+    contrib = get_contribution(telegram_id)
+    if contrib is None:
+        return {"ok": False, "reason": "not_funded"}
+
+    state = get_state()
+    starting = float(state["starting_usd"])
+    cash = float(state["cash_usd"])
+    positions = get_open_positions(spots=spots)
+    resolved = _resolve_spots(None, spots)
+    for pos in positions:
+        pid = _pos_product(pos)
+        if _spot_for(pid, resolved) <= 0:
+            resolved[pid] = float(pos["spot"])
+    equity = _equity(cash, positions, resolved) if resolved else cash
+    total = float(state.get("total_contributed_usd") or total_contributed() or 0)
+    amount = float(contrib["amount_usd"])
+    share = (amount / total) if total > 0 else 0.0
+    user_equity = equity * share
+    user_pnl = user_equity - amount
+    user_pnl_pct = (user_pnl / amount * 100) if amount else 0.0
+    return {
+        "ok": True,
+        "telegram_id": int(telegram_id),
+        "username": contrib.get("username"),
+        "amount_usd": amount,
+        "share_pct": share * 100,
+        "equity_usd": user_equity,
+        "pnl_usd": user_pnl,
+        "pnl_pct": user_pnl_pct,
+        "portfolio_equity_usd": equity,
+        "total_contributed_usd": total,
+    }

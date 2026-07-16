@@ -27,6 +27,7 @@ from macro.context import active_posture
 from patterns.htf_structure import HTFZone, detect_htf_zones
 from patterns.key_levels import compute_key_levels
 from patterns.market_context import MarketContext, build_market_context
+from patterns import relative_strength
 from patterns.order_block import (
     OrderBlock,
     fib_level,
@@ -71,9 +72,9 @@ def _cycle_id() -> str:
     return datetime.now(timezone.utc).strftime("WD%Y%m%dT%H%M%SZ")
 
 
-def _trigger_key(trigger: WatchdogTrigger) -> str:
+def _trigger_key(product_id: str, trigger: WatchdogTrigger) -> str:
     sfp_ts = trigger.sfp_event.ts if trigger.sfp_event else ""
-    return f"{trigger.name}:{trigger.ob.displacement_ts}:{sfp_ts}"
+    return f"{product_id}:{trigger.name}:{trigger.ob.displacement_ts}:{sfp_ts}"
 
 
 def _obs_in_fib(ctx: MarketContext, direction: Direction) -> list[OrderBlock]:
@@ -574,6 +575,7 @@ def build_suggestion(
     trigger: WatchdogTrigger,
     ctx: MarketContext,
     h4_bars: list[dict],
+    product_id: str = "ETH-USD",
 ) -> Suggestion:
     ob = trigger.ob
     if trigger.entry_tranche in ("0.25", "0.50", "0.718"):
@@ -602,6 +604,7 @@ def build_suggestion(
     rationale = _build_rationale(trigger, ctx, ob, entry)
 
     payload = {
+        "product_id": product_id,
         "action": action,
         "size": 0,
         "entry": entry,
@@ -616,6 +619,7 @@ def build_suggestion(
         "order_block_ref": order_block_ref(ob),
     }
     suggestion = analyze.validate_suggestion(payload, market_context=ctx)
+    suggestion.product_id = product_id
     suggestion.deploy_pct = trigger.deploy_pct
     suggestion.entry_tranche = trigger.entry_tranche
     suggestion.order_block_ref = order_block_ref(ob)
@@ -624,10 +628,19 @@ def build_suggestion(
 
 def _is_on_cooldown(trigger_key: str) -> bool:
     state = get_state(WATCHDOG_STATE_KEY)
-    if not state or state.get("trigger_key") != trigger_key:
+    if not state:
+        return False
+    fires = state.get("fires")
+    if isinstance(fires, dict):
+        fired_at_raw = fires.get(trigger_key)
+    elif state.get("trigger_key") == trigger_key:
+        fired_at_raw = state.get("fired_at")
+    else:
+        return False
+    if not fired_at_raw:
         return False
     try:
-        fired_at = datetime.fromisoformat(str(state["fired_at"]).replace("Z", "+00:00"))
+        fired_at = datetime.fromisoformat(str(fired_at_raw).replace("Z", "+00:00"))
     except ValueError:
         return False
     elapsed = (datetime.now(timezone.utc) - fired_at).total_seconds()
@@ -635,21 +648,30 @@ def _is_on_cooldown(trigger_key: str) -> bool:
 
 
 def _record_fire(trigger_key: str, cycle_id: str) -> None:
+    state = get_state(WATCHDOG_STATE_KEY) or {}
+    fires = state.get("fires")
+    if not isinstance(fires, dict):
+        fires = {}
+    now = _now_iso()
+    fires[trigger_key] = now
     set_state(
         WATCHDOG_STATE_KEY,
         {
             "trigger_key": trigger_key,
             "cycle_id": cycle_id,
-            "fired_at": _now_iso(),
+            "fired_at": now,
+            "fires": fires,
         },
     )
 
 
-def _prepare_context() -> tuple[MarketContext, dict[str, list[dict]], float, list[dict]]:
-    data = research.get_all_timeframes()
-    live_spot = research.get_live_spot_price()
+def _prepare_context(
+    product_id: str,
+) -> tuple[MarketContext, dict[str, list[dict]], float, list[dict]]:
+    data = research.get_all_timeframes(product_id=product_id)
+    live_spot = research.get_live_spot_price(product_id=product_id)
     m5_live = research.apply_live_spot_to_bars(data["M5"], live_spot)
-    daily_bars = research.get_daily_bars_for_levels()
+    daily_bars = research.get_daily_bars_for_levels(product_id=product_id)
     ctx = build_market_context(
         data["H4"],
         data["H1"],
@@ -661,117 +683,152 @@ def _prepare_context() -> tuple[MarketContext, dict[str, list[dict]], float, lis
     return ctx, data, live_spot, daily_bars
 
 
-def run_watchdog() -> Suggestion | None:
-    """Run one watchdog scan. Returns a trade Suggestion when a trigger fires."""
+def run_watchdog() -> list[Suggestion] | None:
+    """Run one watchdog scan; fire at most once per configured product."""
     if not bot_config.WATCHDOG_ENABLED:
         return None
 
-    try:
-        ctx, data, live_spot, daily_bars = _prepare_context()
-    except Exception:
-        logger.exception("Watchdog failed to load market data")
-        return None
-
-    open_positions = paper.get_open_positions(live_spot)
-    triggers = evaluate_triggers(ctx, data["M5"], positions=open_positions)
-    scale_in = evaluate_scale_in(ctx, open_positions)
-    if scale_in is not None:
-        triggers = [scale_in] + triggers
-
-    if not triggers:
-        logger.debug("Watchdog scan: no triggers (spot=%.2f)", live_spot)
-        return None
-
     posture = active_posture()
-
-    for trigger in triggers:
-        if posture.get("gate_long") and trigger.direction == "bullish":
-            logger.info(
-                "Watchdog: macro gate blocked long trigger %s (bias=%s sev=%s)",
-                trigger.name,
-                posture.get("eth_bias"),
-                posture.get("max_severity"),
-            )
-            ctx.setup_tags.append("macro_gate_long")
-            continue
-        if posture.get("gate_short") and trigger.direction == "bearish":
-            logger.info(
-                "Watchdog: macro gate blocked short trigger %s (bias=%s sev=%s)",
-                trigger.name,
-                posture.get("eth_bias"),
-                posture.get("max_severity"),
-            )
-            ctx.setup_tags.append("macro_gate_short")
-            continue
-
-        key = _trigger_key(trigger)
-        if _is_on_cooldown(key):
-            logger.info("Watchdog: cooldown active for %s", key)
-            continue
-
+    rs_bias = "neutral"
+    if bot_config.RELATIVE_STRENGTH_ENABLED:
         try:
-            suggestion = build_suggestion(trigger, ctx, data["H4"])
-        except ValueError as exc:
-            logger.info(
-                "Watchdog trigger %s rejected: %s",
-                trigger.name,
-                exc,
-            )
-            continue
-
-        cycle_id = _cycle_id()
-        setup_tags = ",".join(ctx.setup_tags) if ctx.setup_tags else None
-
-        output_paths: list[str] = []
-        try:
-            output_paths = _render_output_charts(
-                suggestion, data, ctx, cycle_id, daily_bars
-            )
+            rs_bias = relative_strength.build_relative_strength_context().bias
         except Exception:
-            logger.exception("Watchdog chart render failed for %s", cycle_id)
+            logger.exception("Watchdog failed to build ETH/BTC relative strength")
 
-        chart_for_ledger = ",".join(output_paths) if output_paths else "watchdog"
-        ledger.append(
-            suggestion,
-            cycle_id,
-            live_spot,
-            chart_path=chart_for_ledger,
-            setup_tags=setup_tags,
+    spots = research.get_spot_prices()
+    all_positions = paper.get_open_positions(spots=spots)
+    fired: list[Suggestion] = []
+    for product_id in bot_config.TRADED_PRODUCTS:
+        try:
+            ctx, data, live_spot, daily_bars = _prepare_context(product_id)
+        except Exception:
+            logger.exception("Watchdog failed to load %s market data", product_id)
+            continue
+
+        spots[product_id] = live_spot
+        open_positions = [
+            p
+            for p in all_positions
+            if p.get("product_id", "ETH-USD") == product_id
+        ]
+        triggers = evaluate_triggers(
+            ctx, data["M5"], positions=open_positions
         )
-        paper.update(suggestion, live_spot, cycle_id=cycle_id)
-        pnl_footer = paper.format_pnl_footer(live_spot)
+        scale_in = evaluate_scale_in(ctx, open_positions)
+        if scale_in is not None:
+            triggers = [scale_in] + triggers
 
-        try:
-            if output_paths:
-                notify.broadcast(suggestion, output_paths, pnl_footer=pnl_footer)
-            else:
-                notify.broadcast_text(suggestion, pnl_footer=pnl_footer)
-        except Exception:
-            logger.exception("Watchdog broadcast failed for %s", cycle_id)
+        for trigger in triggers:
+            side = "long" if trigger.direction == "bullish" else "short"
+            if (
+                bot_config.RELATIVE_STRENGTH_ENABLED
+                and not relative_strength.soft_gate_allows(
+                    rs_bias, product_id, side
+                )
+            ):
+                logger.info(
+                    "Watchdog: ETH/BTC %s bias blocked %s %s",
+                    rs_bias,
+                    product_id,
+                    side,
+                )
+                ctx.setup_tags.append("relative_strength_gate")
+                continue
+            if posture.get("gate_long") and trigger.direction == "bullish":
+                ctx.setup_tags.append("macro_gate_long")
+                continue
+            if posture.get("gate_short") and trigger.direction == "bearish":
+                ctx.setup_tags.append("macro_gate_short")
+                continue
 
-        try:
-            notify.send_watchdog_monitor_alert(cycle_id, trigger.name, suggestion)
-        except Exception:
-            logger.exception("Watchdog monitor alert failed for %s", cycle_id)
+            key = _trigger_key(product_id, trigger)
+            if _is_on_cooldown(key):
+                logger.info("Watchdog: cooldown active for %s", key)
+                continue
 
-        _record_fire(key, cycle_id)
-        logger.info(
-            "Watchdog trade fired: cycle=%s trigger=%s action=%s entry=%s charts=%s",
-            cycle_id,
-            trigger.name,
-            suggestion.action,
-            suggestion.entry,
-            output_paths or "none",
-        )
-        return suggestion
+            try:
+                suggestion = build_suggestion(
+                    trigger, ctx, data["H4"], product_id=product_id
+                )
+            except ValueError as exc:
+                logger.info(
+                    "Watchdog trigger %s rejected for %s: %s",
+                    trigger.name,
+                    product_id,
+                    exc,
+                )
+                continue
 
-    return None
+            cycle_id = (
+                f"{_cycle_id()}_{bot_config.product_label(product_id).upper()}"
+            )
+            setup_tags = ",".join(ctx.setup_tags) if ctx.setup_tags else None
+            output_paths: list[str] = []
+            try:
+                output_paths = _render_output_charts(
+                    suggestion, data, ctx, cycle_id, daily_bars
+                )
+            except Exception:
+                logger.exception("Watchdog chart render failed for %s", cycle_id)
+
+            ledger.append(
+                suggestion,
+                cycle_id,
+                live_spot,
+                chart_path=",".join(output_paths) if output_paths else "watchdog",
+                setup_tags=setup_tags,
+            )
+            paper.update(
+                suggestion,
+                spots.get("ETH-USD", live_spot),
+                cycle_id=cycle_id,
+                spots=spots,
+            )
+            pnl_footer = paper.format_pnl_footer(spots=spots)
+
+            try:
+                if output_paths:
+                    notify.broadcast(
+                        suggestion, output_paths, pnl_footer=pnl_footer
+                    )
+                else:
+                    notify.broadcast_text(suggestion, pnl_footer=pnl_footer)
+            except Exception:
+                logger.exception("Watchdog broadcast failed for %s", cycle_id)
+
+            try:
+                notify.send_watchdog_monitor_alert(
+                    cycle_id, trigger.name, suggestion
+                )
+            except Exception:
+                logger.exception("Watchdog monitor alert failed for %s", cycle_id)
+
+            _record_fire(key, cycle_id)
+            fired.append(suggestion)
+            logger.info(
+                "Watchdog trade fired: cycle=%s product=%s trigger=%s "
+                "action=%s entry=%s charts=%s",
+                cycle_id,
+                product_id,
+                trigger.name,
+                suggestion.action,
+                suggestion.entry,
+                output_paths or "none",
+            )
+            break
+
+    return fired or None
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     result = run_watchdog()
     if result:
-        print(f"Fired: {result.action} @ {result.entry}")
+        for suggestion in result:
+            print(
+                f"Fired: {suggestion.product_id} "
+                f"{suggestion.action} @ {suggestion.entry}"
+            )
     else:
         print("No watchdog trigger")

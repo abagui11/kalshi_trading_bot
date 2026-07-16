@@ -120,8 +120,8 @@ class DashboardApiTests(unittest.TestCase):
         self._config_root.start()
 
         self._spot = patch(
-            "dashboard.data.research.get_spot_price",
-            return_value=2000.0,
+            "dashboard.data.research.get_spot_prices",
+            return_value={"ETH-USD": 2000.0, "BTC-USD": 60000.0},
         )
         self._spot.start()
 
@@ -148,7 +148,22 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["chart_read_score"], 95)
+        self.assertEqual(data["eth_spot"], 2000.0)
+        self.assertEqual(data["btc_spot"], 60000.0)
+        self.assertEqual(
+            data["spots"],
+            {"ETH-USD": 2000.0, "BTC-USD": 60000.0},
+        )
+        self.assertTrue(data["score_tooltip"])
         self.assertIn("headline", data)
+
+    def test_api_spot_keeps_legacy_and_dual_asset_shape(self) -> None:
+        resp = self.client.get("/api/spot")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["spot"], 2000.0)
+        self.assertEqual(data["eth"], 2000.0)
+        self.assertEqual(data["btc"], 60000.0)
 
     def test_chart_endpoint(self) -> None:
         resp = self.client.get("/api/chart/20260702T120000Z")

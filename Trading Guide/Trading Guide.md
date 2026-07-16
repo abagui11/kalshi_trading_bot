@@ -1,4 +1,4 @@
-# ETH ICT Swing Strategy — Trading Guide
+# ETH + BTC ICT Swing Strategy — Trading Guide
 
 **MVP mode: suggestions only. Do not assume orders are placed.**
 
@@ -7,6 +7,16 @@ Portfolio value for sizing: use **live paper equity** (cash + open positions mar
 When analyzing live charts, compare price action to the **reference pattern images** included in the same request (all PNGs from this Trading Guide folder).
 
 **This agent's chart set:** **H4 → H1 → M5** (H4/H1/M5 native from Coinbase).
+
+---
+
+# Dual-asset selection and relative strength
+
+- The agent evaluates **ETH-USD and BTC-USD** independently each cycle. Concurrent ETH and BTC trades are allowed when both assets have valid setups.
+- The **W1 ETH/BTC ratio** supplies a relative-strength bias: favor ETH exposure when ETH is stronger, favor BTC exposure when BTC is stronger, and use neutral weighting when the ratio has no clear edge.
+- Every rationale must lead with and explain the **asset preference**: why ETH, BTC, both, or neither is preferred given ETH/BTC.
+- Position `size` is **USD notional** (dollars deployed). The engine converts it to per-asset quantity (`Notional / Entry`) and clamps it with per-product ETH/BTC guardrails.
+- The same H4/H1/M5 ICT structure, M5 entry, SFP, order-block, fib, stop, and R/R rules apply to both assets.
 
 ---
 
@@ -60,13 +70,12 @@ This is a high level framework for trading and can be used to trade on any timef
 Position sizing is **fixed-fraction**: every trade deploys the same fraction of **live paper equity** as notional, regardless of stop distance. Equity = cash + open positions marked to current spot, so winners compound and losers shrink position size. R/R still governs whether a setup is worth taking (first TP must be at least 1.0× the stop distance away).
 
 ```
-Notional = Live Equity * Deploy %
-Position Size (ETH) = Notional / Entry
+size (USD notional) = Live Equity * Deploy %
 ```
 
 Where Deploy % = **0.25** (25%). Live equity is read from the paper portfolio at validation time.
 
-Return `size` as ETH units consistent with this formula. The engine recomputes and clamps `size` (with min/max ETH guardrails), so an approximate value here is fine.
+Return `size` as **USD notional** (dollars deployed), not ETH/BTC quantity. The engine recomputes `size` from live equity, converts it to per-asset quantity (`Notional / Entry`), and clamps it with per-product ETH/BTC guardrails, so an approximate value here is fine.
 
 **Trade Management:**
 
@@ -82,7 +91,7 @@ Reasons to increase the trade size would be the same as above but inverse.
 
 # Notable Patterns
 
-Reference images are attached in the API request. Match similar structure on the live ETH charts.
+Reference images are attached in the API request. Match similar structure on the live ETH and BTC charts.
 
 **Swing Fail Pattern (SFP):** — see `sfp_examples.png`
 
@@ -204,7 +213,7 @@ Types of questions we should be able to ask the bot later:
 
 ## Valid actions
 
-- `spot_buy` — long spot ETH
+- `spot_buy` — long spot ETH or BTC
 - `spot_sell` — bearish / exit spot idea
 - `deriv_buy` — long perpetuals/futures
 - `deriv_sell` — short perpetuals/futures
@@ -349,4 +358,4 @@ Write `rationale` as **short paragraphs** separated by a blank line (`\n\n`). Do
 
 **Good:** Cite the H4 bearish OB/BRKR for HTF bias; state clearly when no valid M5 SFP is in the window; wait for an M5 fib retest only on bounds listed in programmatic context.
 
-Form **one** trade idea (or `no_trade`) for this hour.
+For a dual-asset request, form **zero to two** trade ideas (at most one per product). For a single-asset critic retry, form one trade idea or `no_trade`.

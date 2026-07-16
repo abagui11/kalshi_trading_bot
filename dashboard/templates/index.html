@@ -3,12 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>ETH Trading Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=journal10">
+  <title>ETH/BTC Trading Agent</title>
+  <link rel="stylesheet" href="/static/style.css?v=journal11">
 </head>
 <body>
   {% macro tip_badge(label, class_name='badge-none') -%}
   <span class="badge {{ class_name }}" title="{{ label|tag_tip }}">{{ label }}</span>
+  {%- endmacro %}
+
+  {% macro score_badge(score, badge, tip) -%}
+  {% if score is not none %}
+  <span class="badge badge-{{ badge }}" title="{{ tip }}">{{ score }}</span>
+  {% else %}—{% endif %}
   {%- endmacro %}
 
   {% macro trade_card(t, mode) %}
@@ -18,9 +24,10 @@
       <span class="trade-summary-main">
         <span class="trade-title">
           <span class="trade-chevron" aria-hidden="true">▸</span>
-          <span class="trade-title-text">{{ trade_title(t.opened_at, t.side) }}</span>
+          <span class="trade-title-text">{{ trade_title(t.opened_at, t.side) }} · {{ t.product_label or 'ETH' }}</span>
         </span>
         <span class="trade-badges">
+          {{ tip_badge(t.product_label or 'ETH', 'badge-none') }}
           {{ tip_badge(t.side, 'badge-good' if t.side == 'long' else 'badge-bad') }}
           {% if mode == 'open' %}
           {{ tip_badge('LIVE', 'badge-live') }}
@@ -63,13 +70,13 @@
       <div class="trade-charts">
         {% if t.structure_chart_url %}
         <figure class="trade-chart">
-          <figcaption>Structure · H4</figcaption>
+          <figcaption>Structure · H4 · {{ t.product_label or 'ETH' }}</figcaption>
           <img class="chart-img zoomable" src="{{ t.structure_chart_url }}" alt="H4 structure chart" loading="lazy">
         </figure>
         {% endif %}
         {% if t.execution_chart_url %}
         <figure class="trade-chart">
-          <figcaption>Execution · M5</figcaption>
+          <figcaption>Execution · M5 · {{ t.product_label or 'ETH' }}</figcaption>
           <img class="chart-img zoomable" src="{{ t.execution_chart_url }}" alt="M5 execution chart" loading="lazy">
         </figure>
         {% endif %}
@@ -105,10 +112,16 @@
           <span class="value">${{ "%.0f"|format(t.order_block.low) }}–{{ "%.0f"|format(t.order_block.high) }}</span>
         </div>
         {% endif %}
-        {% if t.eth_qty is not none %}
+        {% if t.size_usd is not none %}
         <div class="level">
           <span class="label">Size</span>
-          <span class="value">{{ "%.3f"|format(t.eth_qty) }} ETH</span>
+          <span class="value">${{ "%.2f"|format(t.size_usd) }}</span>
+        </div>
+        {% endif %}
+        {% if t.qty is not none or t.eth_qty is not none %}
+        <div class="level">
+          <span class="label">Qty</span>
+          <span class="value">{{ "%.4f"|format(t.qty or t.eth_qty) }} {{ t.product_label or 'ETH' }}</span>
         </div>
         {% endif %}
       </div>
@@ -148,16 +161,24 @@
 
   <div class="wrap">
     <header>
-      <h1>ETH Trading Agent</h1>
-      <p class="sub">An agent for the ETH economy — paper portfolio, chart reads, and trade journal</p>
+      <h1>ETH/BTC Trading Agent</h1>
+      <p class="sub">ICT paper portfolio across ETH and BTC — chart reads, relative strength, and trade journal</p>
     </header>
 
     <section class="card" id="status-card">
       <h2>Agent status</h2>
-      <p class="spot" id="spot">${{ "%.2f"|format(status.spot) }}</p>
-      <p class="sub" id="spot-label">ETH-USD live</p>
+      <div class="metrics" style="margin-bottom:12px">
+        <div class="metric">
+          <div class="label">ETH-USD</div>
+          <div class="value" id="spot-eth">${{ "%.2f"|format(status.eth_spot or status.spot) }}</div>
+        </div>
+        <div class="metric">
+          <div class="label">BTC-USD</div>
+          <div class="value" id="spot-btc">${{ "%.2f"|format(status.btc_spot or 0) }}</div>
+        </div>
+      </div>
       {% if status.score_badge != 'none' %}
-      <span class="badge badge-{{ status.score_badge }}" id="score-badge">
+      <span class="badge badge-{{ status.score_badge }}" id="score-badge" title="{{ status.score_tooltip or '' }}">
         Chart-read {{ status.chart_read_score }}/100
       </span>
       {% endif %}
@@ -279,9 +300,17 @@
       </div>
       <p class="sub" style="margin-top:10px">
         ${{ "%.0f"|format(performance.starting_usd) }} paper book
+        · ${{ "%.0f"|format(performance.total_contributed_usd or performance.starting_usd) }} contributed
         {% if performance.epoch.epoch_label %}({{ performance.epoch.epoch_label }}){% endif %}
-        · {{ performance.closed_trade_count }} closed · {{ performance.open_count }} open ·
-        issue rate {{ performance.chart_read.issue_rate_pct }}%
+        · {{ performance.closed_trade_count }} closed · {{ performance.open_count }} open
+        {% if performance.open_by_product %}
+        (
+        {% for pid, n in performance.open_by_product.items() %}
+        {{ pid.replace('-USD','') }} {{ n }}{% if not loop.last %} · {% endif %}
+        {% endfor %}
+        )
+        {% endif %}
+        · issue rate {{ performance.chart_read.issue_rate_pct }}%
         {% if performance.epoch.epoch_started_at %}
         · epoch since {{ performance.epoch.epoch_started_at }}
         {% endif %}
@@ -306,11 +335,12 @@
 
       {% if closed_trades %}
       <h3 class="journal-subhead">Closed</h3>
-      <div class="trade-list">
+      <div class="trade-list" id="closed-trades-list">
         {% for t in closed_trades %}
         {{ trade_card(t, 'closed') }}
         {% endfor %}
       </div>
+      <button type="button" class="load-more" id="load-more-closed" data-offset="{{ closed_trades|length }}">Load more closed trades</button>
       {% endif %}
     </section>
     {% endif %}
@@ -334,6 +364,7 @@
           <thead>
             <tr>
               <th>Time</th>
+              <th>Asset</th>
               <th>Action</th>
               <th>Score</th>
             </tr>
@@ -342,10 +373,11 @@
             {% for c in cycles %}
             <tr>
               <td>{{ c.ts[:16] if c.ts else '—' }}</td>
+              <td>{{ (c.product_id or 'ETH-USD')|replace('-USD','') }}</td>
               <td>{{ c.action }}</td>
               <td>
                 {% if c.chart_read_score is not none %}
-                <span class="badge badge-{{ c.score_badge }}">{{ c.chart_read_score }}</span>
+                <span class="badge badge-{{ c.score_badge }}" title="{{ c.score_tooltip or '' }}">{{ c.chart_read_score }}</span>
                 {% else %}—{% endif %}
               </td>
             </tr>
@@ -353,6 +385,7 @@
           </tbody>
         </table>
       </div>
+      <button type="button" class="load-more" id="load-more-cycles" data-offset="{{ cycles|length }}">Load more cycles</button>
     </section>
 
     <footer>
@@ -366,8 +399,10 @@
   </div>
 
   <script>
-    function initTradeCards() {
-      document.querySelectorAll('.trade-card > .trade-summary').forEach(function (btn) {
+    function initTradeCards(root) {
+      (root || document).querySelectorAll('.trade-card > .trade-summary').forEach(function (btn) {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
         btn.addEventListener('click', function (ev) {
           if (ev.target.closest('.zoomable')) return;
           var card = btn.closest('.trade-card');
@@ -400,6 +435,8 @@
       }
 
       document.querySelectorAll('img.zoomable').forEach(function (img) {
+        if (img.dataset.bound) return;
+        img.dataset.bound = '1';
         img.setAttribute('role', 'button');
         img.setAttribute('tabindex', '0');
         img.setAttribute('title', 'Click to enlarge');
@@ -430,6 +467,13 @@
     }
     initChartLightbox();
 
+    function money(n) {
+      return '$' + Number(n || 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+    }
+
     async function refresh() {
       try {
         const [spotRes, statusRes, macroRes] = await Promise.all([
@@ -440,9 +484,15 @@
         const spot = await spotRes.json();
         const status = await statusRes.json();
         const macro = await macroRes.json();
-        document.getElementById('spot').textContent =
-          '$' + spot.spot.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        var ethEl = document.getElementById('spot-eth');
+        var btcEl = document.getElementById('spot-btc');
+        if (ethEl) ethEl.textContent = money(spot.eth || spot.spot);
+        if (btcEl) btcEl.textContent = money(spot.btc || (spot.spots && spot.spots['BTC-USD']));
         document.getElementById('headline').textContent = status.headline;
+        var scoreBadge = document.getElementById('score-badge');
+        if (scoreBadge && status.score_tooltip) {
+          scoreBadge.setAttribute('title', status.score_tooltip);
+        }
         const postureEl = document.getElementById('macro-posture');
         if (postureEl && macro.posture) {
           let gates = '';
@@ -455,6 +505,69 @@
       } catch (e) { /* offline */ }
     }
     setInterval(refresh, 60000);
+
+    var cyclesBtn = document.getElementById('load-more-cycles');
+    if (cyclesBtn) {
+      cyclesBtn.addEventListener('click', async function () {
+        var offset = Number(cyclesBtn.dataset.offset || 0);
+        var res = await fetch('/api/cycles?limit=25&offset=' + offset);
+        var rows = await res.json();
+        if (!rows.length) {
+          cyclesBtn.disabled = true;
+          cyclesBtn.textContent = 'No more cycles';
+          return;
+        }
+        var body = document.getElementById('cycles-body');
+        rows.forEach(function (c) {
+          var tr = document.createElement('tr');
+          var asset = (c.product_id || 'ETH-USD').replace('-USD', '');
+          var scoreHtml = c.chart_read_score != null
+            ? '<span class="badge badge-' + c.score_badge + '" title="' + (c.score_tooltip || '').replace(/"/g, '&quot;') + '">' + c.chart_read_score + '</span>'
+            : '—';
+          tr.innerHTML =
+            '<td>' + (c.ts ? c.ts.slice(0, 16) : '—') + '</td>' +
+            '<td>' + asset + '</td>' +
+            '<td>' + c.action + '</td>' +
+            '<td>' + scoreHtml + '</td>';
+          body.appendChild(tr);
+        });
+        cyclesBtn.dataset.offset = String(offset + rows.length);
+      });
+    }
+
+    var closedBtn = document.getElementById('load-more-closed');
+    if (closedBtn) {
+      closedBtn.addEventListener('click', async function () {
+        var offset = Number(closedBtn.dataset.offset || 0);
+        var res = await fetch('/api/trades/paper?limit=15&offset=' + offset);
+        var trades = await res.json();
+        if (!trades.length) {
+          closedBtn.disabled = true;
+          closedBtn.textContent = 'No more trades';
+          return;
+        }
+        // Full card HTML is complex — reload page section simply by appending a compact row list.
+        var list = document.getElementById('closed-trades-list');
+        trades.forEach(function (t) {
+          var div = document.createElement('div');
+          div.className = 'trade-card';
+          div.innerHTML =
+            '<button type="button" class="trade-summary" aria-expanded="false">' +
+            '<span class="trade-summary-main">' +
+            '<span class="trade-title"><span class="trade-chevron" aria-hidden="true">▸</span> ' +
+            (t.product_label || 'ETH') + ' ' + (t.side || '') + '</span>' +
+            '<span class="trade-pnl">' + (t.pnl_usd >= 0 ? '+' : '') + Number(t.pnl_usd || 0).toFixed(2) +
+            ' (' + (t.pnl_pct >= 0 ? '+' : '') + Number(t.pnl_pct || 0).toFixed(1) + '%)</span>' +
+            '<span class="trade-meta sub">' + (t.opened_at || '') + ' → ' + (t.closed_at || '') + '</span>' +
+            '</span></button>' +
+            '<div class="trade-body" hidden><p class="rationale">' +
+            (t.rationale || 'No rationale stored.') + '</p></div>';
+          list.appendChild(div);
+        });
+        initTradeCards(list);
+        closedBtn.dataset.offset = String(offset + trades.length);
+      });
+    }
   </script>
 </body>
 </html>

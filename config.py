@@ -90,3 +90,7 @@ _macro_extra_raw = os.getenv("MACRO_KEYWORD_EXTRA", "")
 MACRO_KEYWORD_EXTRA: list[str] = [k.strip().lower() for k in _macro_extra_raw.split(",") if k.strip()]
 
 MACRO_WEBHOOK_SECRET: str | None = _optional("MACRO_WEBHOOK_SECRET")
+
+# Public dashboard URL shown in Telegram (Portfolio button / welcome copy).
+DASHBOARD_PUBLIC_URL: str | None = _optional("DASHBOARD_PUBLIC_URL")
+DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8080") or "8080")

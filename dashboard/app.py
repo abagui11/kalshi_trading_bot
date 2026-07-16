@@ -45,7 +45,7 @@ class MacroIngestBody(BaseModel):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="ETH Trading Agent Dashboard", docs_url=None, redoc_url=None)
+    app = FastAPI(title="ETH/BTC Trading Agent Dashboard", docs_url=None, redoc_url=None)
 
     ledger.init_db()
     paper.init_db()
@@ -81,6 +81,10 @@ def create_app() -> FastAPI:
     async def api_spot() -> dict:
         return data.get_live_spot()
 
+    @app.get("/api/spots")
+    async def api_spots() -> dict:
+        return data.get_live_spots()
+
     @app.get("/api/status")
     async def api_status() -> dict:
         return data.get_status_payload()
@@ -90,12 +94,20 @@ def create_app() -> FastAPI:
         return data.get_open_positions_payload()
 
     @app.get("/api/trades/paper")
-    async def api_paper_trades() -> list:
-        return data.get_closed_trades_payload()
+    async def api_paper_trades(limit: int = 50, offset: int = 0) -> list:
+        return data.get_closed_trades_payload(
+            limit=min(limit, 100), offset=max(offset, 0)
+        )
+
+    @app.get("/api/trades/archived")
+    async def api_archived_trades(limit: int = 50, offset: int = 0) -> list:
+        return data.get_archived_trades_payload(
+            limit=min(limit, 100), offset=max(offset, 0)
+        )
 
     @app.get("/api/cycles")
     async def api_cycles(limit: int = 30, offset: int = 0) -> list:
-        return data.get_cycles(limit=min(limit, 100), offset=offset)
+        return data.get_cycles(limit=min(limit, 100), offset=max(offset, 0))
 
     @app.get("/api/cycles/{cycle_id}")
     async def api_cycle_detail(cycle_id: str) -> dict:

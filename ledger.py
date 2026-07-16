@@ -38,6 +38,10 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
     }
     if "setup_tags" not in cols:
         conn.execute("ALTER TABLE suggestions ADD COLUMN setup_tags TEXT")
+    if "product_id" not in cols:
+        conn.execute(
+            "ALTER TABLE suggestions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
+        )
 
 
 def _connect() -> sqlite3.Connection:
@@ -64,6 +68,7 @@ def append(
     """Append one suggestion row. Returns the new row id."""
     init_db()
     row_ts = ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
 
     with _connect() as conn:
         cursor = conn.execute(
@@ -71,8 +76,8 @@ def append(
             INSERT INTO suggestions (
                 ts, cycle_id, action, size, entry, stop_loss,
                 take_profits, risk_reward, price_at_suggestion, rationale, chart_path,
-                setup_tags
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                setup_tags, product_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row_ts,
@@ -87,6 +92,7 @@ def append(
                 suggestion.rationale,
                 chart_path,
                 setup_tags,
+                product_id,
             ),
         )
         conn.commit()

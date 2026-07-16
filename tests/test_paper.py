@@ -53,7 +53,7 @@ class PaperPositionTests(unittest.TestCase):
         state = paper.get_state()
         self.assertEqual(state["side"], "short")
         self.assertEqual(state["action"], "deriv_sell")
-        self.assertAlmostEqual(state["eth_qty"], suggestion.size, places=4)
+        self.assertAlmostEqual(state["eth_qty"], suggestion.size / 1576.0, places=4)
         self.assertEqual(state["stop_loss"], 1592.0)
         self.assertEqual(state["take_profits"], [1545.0, 1515.0, 1490.0])
         self.assertEqual(state["open_cycle_id"], "test_cycle_short")
@@ -262,7 +262,7 @@ class PaperPositionTests(unittest.TestCase):
 
         state = paper.get_state()
         self.assertEqual(state["side"], "long")
-        self.assertAlmostEqual(state["eth_qty"], 1.0 - short.size, places=4)
+        self.assertAlmostEqual(state["eth_qty"], 1.0 - short.size / 1850.0, places=4)
         self.assertEqual(state["open_cycle_id"], "cycle_long")
         self.assertEqual(state["stop_loss"], 1700.0)
         positions = paper.get_open_positions(1850.0)
@@ -325,7 +325,7 @@ class PaperPositionTests(unittest.TestCase):
 
         state = paper.get_state()
         self.assertEqual(state["side"], "short")
-        self.assertAlmostEqual(state["eth_qty"], short.size - 0.25, places=4)
+        self.assertAlmostEqual(state["eth_qty"], short.size / 1850.0 - 0.25, places=4)
         self.assertEqual(state["stop_loss"], 1900.0)
         self.assertEqual(state["open_cycle_id"], "cycle_short")
 
@@ -356,7 +356,7 @@ class PaperPositionTests(unittest.TestCase):
 
         state = paper.get_state()
         self.assertEqual(state["side"], "short")
-        self.assertAlmostEqual(state["eth_qty"], 1.0 - long.size, places=4)
+        self.assertAlmostEqual(state["eth_qty"], 1.0 - long.size / 1800.0, places=4)
 
     def test_same_direction_adds_to_position(self) -> None:
         first = Suggestion(
@@ -384,9 +384,11 @@ class PaperPositionTests(unittest.TestCase):
 
         state = paper.get_state()
         self.assertEqual(state["side"], "long")
-        self.assertAlmostEqual(state["eth_qty"], first.size + second.size, places=4)
-        expected_entry = (first.size * 1800.0 + second.size * 1850.0) / (
-            first.size + second.size
+        first_qty = first.size / 1800.0
+        second_qty = second.size / 1850.0
+        self.assertAlmostEqual(state["eth_qty"], first_qty + second_qty, places=4)
+        expected_entry = (first_qty * 1800.0 + second_qty * 1850.0) / (
+            first_qty + second_qty
         )
         self.assertAlmostEqual(state["avg_entry"], expected_entry, places=2)
         self.assertEqual(state["stop_loss"], 1750.0)
@@ -439,7 +441,7 @@ class PaperPositionTests(unittest.TestCase):
         positions = paper.get_open_positions(1570.0)
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0]["side"], "short")
-        self.assertAlmostEqual(positions[0]["eth_qty"], 1.0 - long.size, places=4)
+        self.assertAlmostEqual(positions[0]["eth_qty"], 1.0 - long.size / 1570.0, places=4)
 
     def test_get_sizing_basis_uses_live_equity(self) -> None:
         paper.restore_open_position(
@@ -483,7 +485,7 @@ class PaperPositionTests(unittest.TestCase):
         self.assertNotEqual(suggestion.size, 0.99)
         paper.update(suggestion, spot_price=1576.0, cycle_id="size_cycle")
         state = paper.get_state()
-        self.assertAlmostEqual(state["eth_qty"], suggestion.size, places=4)
+        self.assertAlmostEqual(state["eth_qty"], suggestion.size / 1576.0, places=4)
 
     def test_same_ob_add_does_not_widen_stop(self) -> None:
         first = Suggestion(
@@ -519,7 +521,7 @@ class PaperPositionTests(unittest.TestCase):
         self.assertEqual(positions[0]["stop_loss"], 1878.0)
         self.assertIn("0.25", positions[0]["entry_tranches"])
         self.assertIn("0.50", positions[0]["entry_tranches"])
-        self.assertGreater(positions[0]["eth_qty"], first.size)
+        self.assertGreater(positions[0]["eth_qty"], first.size / 1863.0)
 
     def test_different_ob_opens_separate_position(self) -> None:
         first = Suggestion(
@@ -561,7 +563,7 @@ class PaperPositionTests(unittest.TestCase):
         paper.update(
             Suggestion(
                 action="deriv_sell",
-                size=0.5,
+                size=1250.0,
                 entry=1576.0,
                 stop_loss=1592.0,
                 take_profits=[1545.0],

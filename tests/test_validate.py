@@ -32,16 +32,16 @@ class ValidateTradeRiskTests(unittest.TestCase):
     def test_validate_sizes_from_live_equity(self) -> None:
         s = self._short()
         validate.validate_trade_risk(s, portfolio_value=4500.0, cash=4500.0)
-        expected = 4500.0 * bot_config.TRADE_DEPLOY_PCT / float(s.entry)
-        self.assertAlmostEqual(s.size, round(expected, 4), places=4)
+        expected = 4500.0 * bot_config.TRADE_DEPLOY_PCT
+        self.assertAlmostEqual(s.size, round(expected, 2), places=2)
 
     def test_overwrites_inflated_llm_size(self) -> None:
         s = self._short(size=0.99)
         validate.validate_trade_risk(s, portfolio_value=5000.0, cash=5000.0)
-        expected = validate.compute_eth_qty(
+        expected = validate.compute_order_notional_usd(
             float(s.entry), float(s.stop_loss), cash=5000.0, equity_usd=5000.0
         )
-        self.assertAlmostEqual(s.size, round(expected, 4), places=4)
+        self.assertAlmostEqual(s.size, round(expected, 2), places=2)
         self.assertNotEqual(s.size, 0.99)
 
     def test_compute_eth_qty_deploys_fixed_fraction(self) -> None:

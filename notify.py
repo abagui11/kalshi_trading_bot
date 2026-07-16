@@ -57,7 +57,7 @@ def build_caption(suggestion: Suggestion) -> str:
         f"SL: {suggestion.stop_loss:,.2f}\n"
         f"TP: {tps}\n"
         f"R/R: {rr}\n"
-        f"Size: {suggestion.size}"
+        f"Size: ${suggestion.size:,.2f}"
     )
 
 

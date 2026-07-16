@@ -633,3 +633,7 @@ body.lightbox-open {
     max-height: none;
   }
 }
+
+.load-more { margin-top: 12px; background: transparent; border: 1px solid rgba(139, 148, 158, 0.35); color: var(--text); border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+.load-more:disabled { opacity: 0.5; cursor: default; }
+

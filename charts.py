@@ -16,6 +16,7 @@ import mplfinance as mpf
 import pandas as pd
 from matplotlib.patches import Rectangle
 
+import bot_config
 import config
 import research
 from models import Suggestion
@@ -23,6 +24,7 @@ from patterns.htf_structure import HTFZone
 from patterns.key_levels import KeyLevel
 from patterns.market_context import MarketContext
 from patterns.order_block import fib_zone_bounds
+from patterns.relative_strength import RelativeStrengthContext
 
 FIGSIZE = (24, 10)
 OUTPUT_FIGSIZE = (24, 10)
@@ -49,6 +51,18 @@ _STYLE = mpf.make_mpf_style(
 def _ensure_charts_dir() -> Path:
   config.CHARTS_DIR.mkdir(parents=True, exist_ok=True)
   return config.CHARTS_DIR
+
+
+def _chart_label(product_id: str | None) -> str:
+  pid = product_id or bot_config.DEFAULT_PRODUCT_ID
+  if pid in ("ETH/BTC", "ETHBTC"):
+    return "ETH/BTC"
+  return pid
+
+
+def _product_slug(product_id: str | None) -> str:
+  label = _chart_label(product_id)
+  return label.replace("/", "_").replace("-", "_")
 
 
 def _to_mpf_df(bars: list[dict]) -> pd.DataFrame:
@@ -363,12 +377,16 @@ def render_marked_charts(
   htf_zones: list[HTFZone],
   cycle_id: str | None = None,
   market_context: MarketContext | None = None,
+  *,
+  product_id: str = "ETH-USD",
 ) -> dict[str, str]:
   """Render macro-marked candlestick PNGs per strategy timeframe."""
   out_dir = _ensure_charts_dir()
   cycle_id = cycle_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
   paths: dict[str, str] = {}
   visible_levels_cache: dict[str, list[KeyLevel]] = {}
+  label = _chart_label(product_id)
+  slug = _product_slug(product_id)
 
   for tf in research.STRATEGY_TIMEFRAMES:
     bars = data.get(tf)
@@ -376,8 +394,10 @@ def render_marked_charts(
       raise ValueError(f"Missing OHLC data for {tf}")
     df = _to_mpf_df(bars)
     visible_levels_cache[tf] = _visible_key_levels(key_levels, df)
-    path = out_dir / f"{cycle_id}_{tf}_marked.png"
-    fig, ax = _render_candlestick_figure(df, f"ETH-USD {tf} — Key Levels + H4 Structure")
+    path = out_dir / f"{cycle_id}_{slug}_{tf}_marked.png"
+    fig, ax = _render_candlestick_figure(
+      df, f"{label} {tf} — Key Levels + H4 Structure"
+    )
     _draw_htf_zones(ax, df, htf_zones)
     _draw_swing_hlines(ax, df)
     _draw_key_levels(ax, visible_levels_cache[tf], df)
@@ -388,14 +408,35 @@ def render_marked_charts(
   return paths
 
 
+def render_ratio_chart(
+  rs: RelativeStrengthContext,
+  cycle_id: str | None = None,
+) -> str | None:
+  """Render marked W1 ETH/BTC ratio chart. Returns path or None if no bars."""
+  if not rs.w1_bars:
+    return None
+  out_dir = _ensure_charts_dir()
+  cycle_id = cycle_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+  df = _to_mpf_df(rs.w1_bars)
+  path = out_dir / f"{cycle_id}_ETH_BTC_W1_marked.png"
+  fig, ax = _render_candlestick_figure(df, "ETH/BTC W1 — Relative Strength")
+  _draw_htf_zones(ax, df, rs.htf_zones)
+  _draw_swing_hlines(ax, df)
+  return _save_chart_figure(fig, path)
+
+
 def render_charts(
   data: dict[str, list[dict]],
   cycle_id: str | None = None,
+  *,
+  product_id: str = "ETH-USD",
 ) -> dict[str, str]:
   """Render clean candlestick PNGs per timeframe. Returns {tf: path}."""
   out_dir = _ensure_charts_dir()
   cycle_id = cycle_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
   paths: dict[str, str] = {}
+  label = _chart_label(product_id)
+  slug = _product_slug(product_id)
 
   for tf in research.STRATEGY_TIMEFRAMES:
     bars = data.get(tf)
@@ -404,7 +445,7 @@ def render_charts(
 
     df = _to_mpf_df(bars)
     swing_high, swing_low = _swing_levels(df)
-    path = out_dir / f"{cycle_id}_{tf}.png"
+    path = out_dir / f"{cycle_id}_{slug}_{tf}.png"
 
     hlines = dict(
       hlines=[swing_high, swing_low],
@@ -419,7 +460,7 @@ def render_charts(
       type="candle",
       style=_STYLE,
       volume=True,
-      title=f"ETH-USD {tf}",
+      title=f"{label} {tf}",
       figsize=FIGSIZE,
       savefig=dict(fname=str(path), dpi=DPI, bbox_inches="tight"),
       hlines=hlines,
@@ -627,6 +668,8 @@ def build_output_charts(
   out_dir = _ensure_charts_dir()
   paths: list[str] = []
   valid_tfs = set(research.STRATEGY_TIMEFRAMES)
+  label = _chart_label(getattr(suggestion, "product_id", None))
+  slug = _product_slug(getattr(suggestion, "product_id", None))
 
   def _render_output_chart(
     tf: str,
@@ -690,7 +733,7 @@ def build_output_charts(
           ax_price, tp, f"TP{i}", "#0066CC", ":", label_side="left"
         )
 
-    out_path = out_dir / f"{cycle_id}_{tf}_{suffix}.png"
+    out_path = out_dir / f"{cycle_id}_{slug}_{tf}_{suffix}.png"
     return _save_chart_figure(fig, out_path)
 
   if suggestion.action == "no_trade":
@@ -701,7 +744,7 @@ def build_output_charts(
       _render_output_chart(
         primary,
         "notrade",
-        f"ETH-USD {primary} — No Trade",
+        f"{label} {primary} — No Trade",
       )
     )
     return paths
@@ -717,7 +760,7 @@ def build_output_charts(
     _render_output_chart(
       structure_tf,
       "structure",
-      f"ETH-USD {structure_tf} — HTF Structure",
+      f"{label} {structure_tf} — HTF Structure",
     )
   )
 
@@ -726,7 +769,7 @@ def build_output_charts(
       _render_output_chart(
         entry_tf,
         "entry",
-        f"ETH-USD {entry_tf} — Entry / SL / TP",
+        f"{label} {entry_tf} — Entry / SL / TP",
         show_trade=True,
         show_fib=True,
       )
@@ -736,7 +779,7 @@ def build_output_charts(
       _render_output_chart(
         entry_tf,
         "entry",
-        f"ETH-USD {entry_tf} — Entry",
+        f"{label} {entry_tf} — Entry",
         show_trade=True,
         show_fib=True,
       )
@@ -919,9 +962,10 @@ def build_outcome_charts(
     out_path = out_dir / f"{cycle_id}_{tf}_outcome.png"
     return _save_chart_figure(fig, out_path)
 
+  label = _chart_label(getattr(suggestion, "product_id", None))
   h4_path = _render_outcome(
     structure_tf,
-    f"ETH-USD {structure_tf} — Trade Outcome (Structure)",
+    f"{label} {structure_tf} — Trade Outcome (Structure)",
     show_fib=False,
   )
   if h4_path:
@@ -929,7 +973,7 @@ def build_outcome_charts(
 
   m5_path = _render_outcome(
     entry_tf,
-    f"ETH-USD {entry_tf} — Trade Outcome (Execution)",
+    f"{label} {entry_tf} — Trade Outcome (Execution)",
     show_fib=True,
   )
   if m5_path:
@@ -953,10 +997,17 @@ def annotate_chart(
   annotated_path = out_dir / f"{cycle_id}_M5_annotated.png"
 
   if m5_bars is None:
-    m5_bars = research.get_ohlc("M5")
+    m5_bars = research.get_ohlc(
+      "M5", product_id=getattr(suggestion, "product_id", None) or "ETH-USD"
+    )
   df = _to_mpf_df(m5_bars)
 
-  title = "ETH-USD M5 — Trade Idea" if suggestion.action != "no_trade" else "ETH-USD M5 — No Trade"
+  label = _chart_label(getattr(suggestion, "product_id", None))
+  title = (
+    f"{label} M5 — Trade Idea"
+    if suggestion.action != "no_trade"
+    else f"{label} M5 — No Trade"
+  )
   fig, ax = _render_candlestick_figure(df, title, figsize=OUTPUT_FIGSIZE)
 
   _draw_detected_overlays(ax, df, market_context)

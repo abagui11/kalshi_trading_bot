@@ -10,10 +10,12 @@ Run the bot on a VPS so it sends trade suggestions every hour without your PC on
 
 | Component | What it does |
 |-----------|----------------|
-| `main.py` | Telegram bot (chat + `/start`) + hourly trade cycle + watchdog scanner |
+| `main.py` | Telegram bot (chat + `/start` + inline buttons) + dual-asset hourly trade cycle + watchdog scanner |
 | `systemd` (`eth-agent.service`) | Keeps `main.py` running 24/7, restarts on crash |
 | `ledger.db` → `subscribers` | Records everyone who messaged the bot |
-| `ALLOWED_TELEGRAM_IDS` in `.env` | Manual paywall — only these IDs get suggestions + chat |
+| `PAYWALL_ENABLED` in `.env` | `false` for open beta link access; set `true` to enforce `ALLOWED_TELEGRAM_IDS` |
+
+The live strategy evaluates **ETH-USD and BTC-USD** in both the hourly cycle and watchdog. Both assets share one paper book; W1 ETH/BTC relative strength is advisory context and a watchdog soft gate.
 
 ---
 
@@ -68,7 +70,9 @@ Required keys (see `.env.example`):
 ANTHROPIC_API_KEY=...
 ANTHROPIC_MODEL=claude-sonnet-4-6
 TELEGRAM_BOT_TOKEN=...
+PAYWALL_ENABLED=false
 ALLOWED_TELEGRAM_IDS=YOUR_TELEGRAM_ID
+DASHBOARD_PUBLIC_URL=https://dashboard.yourdomain.com
 MARKET_DATA_API=https://api.coinbase.com/api/v3/brokerage/market
 PORTFOLIO_VALUE=5000
 PAPER_PORTFOLIO_VALUE=5000
@@ -79,6 +83,10 @@ PAPER_PORTFOLIO_VALUE=5000
 ```
 
 **Important:** Leave `TELEGRAM_CHAT_ID` **empty** unless it is a *different* chat from your user ID (avoids duplicate hourly messages).
+
+For the beta, keep `PAYWALL_ENABLED=false`. Anyone with the bot link can send `/start`, use the inline keyboard, and receive bot access without being added to `ALLOWED_TELEGRAM_IDS`. `DASHBOARD_PUBLIC_URL` supplies the Telegram **Portfolio** button; use the final public HTTPS URL with no trailing path.
+
+The **Fund** button is a placeholder for future real funding. It makes no wallet transaction: each Telegram user may add one fake **$1,000 paper deposit** to the shared ETH/BTC book and then view their proportional paper equity with **My Metrics**.
 
 ### 6. Start the service
 
@@ -100,9 +108,18 @@ You should get a Telegram DM within a minute of the first cycle.
 
 ---
 
-## Part 2 — Adding subscribers (manual allowlist)
+## Part 2 — Subscriber onboarding
 
-### Flow for a new user
+### Open beta flow (`PAYWALL_ENABLED=false`)
+
+1. **You** share the bot link (for example, `https://t.me/YourBotName`).
+2. **They** open it and send **`/start`**.
+3. Their `telegram_id` is saved in `ledger.db` → `subscribers`, and the bot returns the inline keyboard.
+4. They can use **Fund**, **My Metrics**, **Portfolio**, and **Research** immediately.
+
+No manual approval or @userinfobot lookup is required in beta mode.
+
+### Restricted flow (`PAYWALL_ENABLED=true`)
 
 1. **You** share the bot link (e.g. `t.me/YourBotName`).
 2. **They** open it and send **`/start`** (they may see the paywall — that's expected).
@@ -197,7 +214,7 @@ sudo -u ethagent /opt/eth-trading-agent/.venv/bin/python \
 sudo systemctl restart eth-agent eth-dashboard
 ```
 
-This moves all `paper_trades` / `paper_positions` into archive tables (label `legacy_1k`), resets cash to $5,000, and sizes new trades at a fixed **25% of portfolio** (`TRADE_DEPLOY_PCT`) with **0.25–2.0 ETH** guardrails. The dashboard shows archived trades in a separate section.
+This moves all `paper_trades` / `paper_positions` into archive tables (label `legacy_1k`), resets cash to $5,000, and seeds the house row in `paper_contributions`. New ETH and BTC trades use a fixed **25% of live paper equity** (`TRADE_DEPLOY_PCT`) with product-specific quantity caps. A subscriber's later **Fund** action adds a separate fake $1,000 deposit to this same book. The dashboard shows archived trades in a separate section.
 
 Dry-run first (no writes):
 
@@ -279,9 +296,9 @@ dashboard.yourdomain.com {
 sudo systemctl reload caddy
 ```
 
-Your public link: `https://dashboard.yourdomain.com` — open it from any device.
+Your public link: `https://dashboard.yourdomain.com` — open it from any device. Set the same value as `DASHBOARD_PUBLIC_URL` in `/opt/eth-trading-agent/.env`, then restart `eth-agent` so Telegram's **Portfolio** button uses it.
 
-The dashboard includes a **Macro news monitor** section (active classified headlines, recent ingested items, posture gates).
+The dashboard includes dual ETH/BTC live spots, shared paper-book performance, paginated trade/cycle history with per-asset labels, chart-read score tooltips, and a **Macro news monitor** section (active classified headlines, recent ingested items, posture gates).
 
 ### Macro headline webhook (optional push ingest)
 
@@ -355,8 +372,9 @@ Then open `http://YOUR_SERVER_IP:8080` (allow port 8080 in the cloud firewall if
 ## Checklist
 
 - [ ] Local `main.py` stopped before starting cloud
-- [ ] `.env` on server has all keys + `ALLOWED_TELEGRAM_IDS`
+- [ ] `.env` has `PAYWALL_ENABLED=false` for beta (or an allowlist when `true`)
+- [ ] `.env` has the public HTTPS `DASHBOARD_PUBLIC_URL`
 - [ ] `TELEGRAM_CHAT_ID` empty or different from allowlist IDs
 - [ ] `systemctl status eth-agent` shows **active (running)**
 - [ ] You received an hourly DM on Telegram
-- [ ] New users: `/start` → `subscribers.py` → add ID → restart
+- [ ] Beta onboarding tested: share bot link → user sends `/start` → inline keyboard appears

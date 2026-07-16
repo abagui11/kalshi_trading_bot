@@ -31,6 +31,7 @@ TRADING_GUIDE_PATH = config.TRADING_GUIDE_DIR / "Trading Guide.md"
 VALID_ACTIONS = {"spot_buy", "spot_sell", "deriv_buy", "deriv_sell", "no_trade"}
 CHART_ORDER = ("H4", "H1", "M5")
 MAX_SUGGESTION_TOKENS = 1536
+MAX_MULTI_SUGGESTION_TOKENS = 2560
 _JSON_RETRY_HINT = (
     "Return valid JSON only. Keep rationale under 400 characters to avoid truncation."
 )
@@ -128,12 +129,14 @@ def _build_user_content(
     chart_paths: dict[str, str],
     market_context: MarketContext | None = None,
     audit_feedback: str | None = None,
+    product_id: str | None = None,
 ) -> list[dict]:
+    product_id = product_id or bot_config.DEFAULT_PRODUCT_ID
     content: list[dict] = [
         {
             "type": "text",
             "text": (
-                "Analyze live ETH-USD marked charts and apply the Trading Guide strategy. "
+                f"Analyze live {product_id} marked charts and apply the Trading Guide strategy. "
                 "Compare live structure to all reference pattern images below. "
                 "Cite H4 OB/BRKR for HTF context and M5 OB (with fib zone) for entries — "
                 "never label an H4 box as 'M5 OB'. HTF is advisory, not a hard veto on M5 setups. "
@@ -182,6 +185,88 @@ def _build_user_content(
         content.append({"type": "text", "text": f"--- {label} ---"})
         content.append(_image_block(path))
 
+    return content
+
+
+def _build_multi_user_content(
+    charts_by_product: dict[str, dict[str, str]],
+    contexts_by_product: dict[str, MarketContext],
+    relative_strength: str,
+    ratio_chart_path: str | Path | None = None,
+    audit_feedback: str | None = None,
+) -> list[dict]:
+    """Build one vision request containing both assets and ETH/BTC context."""
+    products = [pid for pid in bot_config.TRADED_PRODUCTS if pid in charts_by_product]
+    content: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                "Analyze both ETH-USD and BTC-USD. Lead with why ETH versus BTC should "
+                "receive more, less, or equal weight based on the W1 ETH/BTC ratio. You "
+                "may return 0-2 actionable trades, at most one per product; concurrent "
+                "ETH and BTC trades are allowed. Every rationale must cite the ETH/BTC "
+                "bias and explain how it affects that asset. Apply the same H4/H1/M5 ICT "
+                "rules and M5 order-block validation to each product independently.\n\n"
+                "Return JSON only in this shape:\n"
+                '{"asset_preference":"brief ETH/BTC weighting reason","trades":['
+                '{"product_id":"ETH-USD","action":"spot_buy",'
+                '"size":0,"entry":0,"stop_loss":0,"take_profits":[],'
+                '"risk_reward":null,"rationale":"...",'
+                '"decision_charts":["H4","H1","M5"],'
+                '"structure_chart":"H4","entry_chart":"M5","order_block":null},'
+                '{"product_id":"BTC-USD","action":"no_trade","rationale":"..."}'
+                "]}\n"
+                "The size field is USD notional, not ETH/BTC quantity. It may be 0; "
+                "validation will overwrite it with the configured dollar deployment."
+            ),
+        },
+        {"type": "text", "text": OVERLAY_LEGEND},
+        {
+            "type": "text",
+            "text": f"=== Authoritative relative-strength context ===\n{relative_strength}",
+        },
+    ]
+    if audit_feedback:
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    "Correct these prior fact-check issues and cite only structures in "
+                    f"the matching product context:\n\n{audit_feedback}"
+                ),
+            }
+        )
+    if ratio_chart_path:
+        content.append({"type": "text", "text": "--- ETH/BTC W1 ratio chart ---"})
+        content.append(_image_block(ratio_chart_path))
+
+    for product_id in products:
+        context = contexts_by_product.get(product_id)
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"=== {product_id} market context ===\n"
+                    f"{context.to_prompt_block() if context else 'Unavailable'}"
+                ),
+            }
+        )
+        for tf in CHART_ORDER:
+            path = charts_by_product[product_id][tf]
+            content.append(
+                {"type": "text", "text": f"--- {product_id} live {tf} marked chart ---"}
+            )
+            content.append(_image_block(path))
+
+    content.append(
+        {
+            "type": "text",
+            "text": "--- Reference pattern examples (apply identically to both assets) ---",
+        }
+    )
+    for label, path in load_pattern_images():
+        content.append({"type": "text", "text": f"--- {label} ---"})
+        content.append(_image_block(path))
     return content
 
 
@@ -330,7 +415,12 @@ def _validate_order_block_entry(
     )
 
 
-def _validate(data: dict, market_context: MarketContext | None = None) -> Suggestion:
+def _validate(
+    data: dict,
+    market_context: MarketContext | None = None,
+    *,
+    spots: dict[str, float] | None = None,
+) -> Suggestion:
     action = str(data.get("action", "no_trade"))
     if action not in VALID_ACTIONS:
         raise ValueError(f"Invalid action: {action}")
@@ -359,7 +449,7 @@ def _validate(data: dict, market_context: MarketContext | None = None) -> Sugges
 
     _validate_order_block_entry(suggestion, market_context)
     spot = market_context.spot if market_context is not None else None
-    validate.validate_trade_risk(suggestion, spot_price=spot)
+    validate.validate_trade_risk(suggestion, spot_price=spot, spots=spots)
 
     return suggestion
 
@@ -367,9 +457,11 @@ def _validate(data: dict, market_context: MarketContext | None = None) -> Sugges
 def validate_suggestion(
     data: dict,
     market_context: MarketContext | None = None,
+    *,
+    spots: dict[str, float] | None = None,
 ) -> Suggestion:
     """Public wrapper for programmatic / watchdog trade validation."""
-    return _validate(data, market_context=market_context)
+    return _validate(data, market_context=market_context, spots=spots)
 
 
 def propose_trade(
@@ -377,8 +469,10 @@ def propose_trade(
     trading_guide: str | None = None,
     market_context: MarketContext | None = None,
     audit_feedback: str | None = None,
+    product_id: str | None = None,
 ) -> Suggestion:
     """Single Claude call: chart images + Trading Guide -> Suggestion (or no_trade on failure)."""
+    product_id = product_id or bot_config.DEFAULT_PRODUCT_ID
     guide_text = trading_guide if trading_guide is not None else load_trading_guide()
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     feedback = audit_feedback
@@ -403,13 +497,14 @@ def propose_trade(
                             chart_paths,
                             market_context,
                             audit_feedback=feedback,
+                            product_id=product_id,
                         ),
                     }
                 ],
             )
         except Exception as exc:
             logger.exception("Claude API call failed")
-            return Suggestion.no_trade(f"api_error: {exc}")
+            return Suggestion.no_trade(f"api_error: {exc}", product_id=product_id)
 
         raw_text = ""
         for block in response.content:
@@ -418,6 +513,7 @@ def propose_trade(
 
         try:
             data = _extract_json(raw_text)
+            data["product_id"] = product_id
             return _validate(data, market_context=market_context)
         except json.JSONDecodeError as exc:
             last_exc = exc
@@ -425,12 +521,128 @@ def propose_trade(
             if attempt == 0:
                 feedback = f"{feedback}\n\n{_JSON_RETRY_HINT}" if feedback else _JSON_RETRY_HINT
                 continue
-            return Suggestion.no_trade(f"parse_error: {exc}")
+            return Suggestion.no_trade(f"parse_error: {exc}", product_id=product_id)
         except (ValueError, KeyError, TypeError) as exc:
             logger.warning("Malformed suggestion: %s | raw=%s", exc, raw_text[:500])
-            return Suggestion.no_trade(f"parse_error: {exc}")
+            return Suggestion.no_trade(f"parse_error: {exc}", product_id=product_id)
 
-    return Suggestion.no_trade(f"parse_error: {last_exc}")
+    return Suggestion.no_trade(f"parse_error: {last_exc}", product_id=product_id)
+
+
+def propose_trades_multi(
+    charts_by_product: dict[str, dict[str, str]],
+    contexts_by_product: dict[str, MarketContext],
+    relative_strength: str,
+    ratio_chart_path: str | Path | None = None,
+    trading_guide: str | None = None,
+    audit_feedback: str | None = None,
+) -> list[Suggestion]:
+    """One Claude vision call for independent ETH and BTC trade decisions."""
+    guide_text = trading_guide if trading_guide is not None else load_trading_guide()
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    feedback = audit_feedback
+    allowed_products = set(charts_by_product) & set(contexts_by_product)
+
+    for attempt in range(2):
+        try:
+            response = client.messages.create(
+                model=config.ANTHROPIC_MODEL,
+                max_tokens=MAX_MULTI_SUGGESTION_TOKENS,
+                system=[
+                    {
+                        "type": "text",
+                        "text": guide_text,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _build_multi_user_content(
+                            charts_by_product,
+                            contexts_by_product,
+                            relative_strength,
+                            ratio_chart_path=ratio_chart_path,
+                            audit_feedback=feedback,
+                        ),
+                    }
+                ],
+            )
+        except Exception as exc:
+            logger.exception("Claude multi-asset API call failed")
+            return [
+                Suggestion.no_trade(f"api_error: {exc}", product_id=pid)
+                for pid in bot_config.TRADED_PRODUCTS
+                if pid in allowed_products
+            ]
+
+        raw_text = "".join(
+            block.text for block in response.content if block.type == "text"
+        )
+        try:
+            payload = _extract_json(raw_text)
+            asset_preference = str(payload.get("asset_preference") or "").strip()
+            raw_trades = payload.get("trades")
+            if not isinstance(raw_trades, list):
+                raise ValueError("trades must be a JSON array")
+            if len(raw_trades) > len(allowed_products):
+                raise ValueError("at most one decision per product is allowed")
+
+            import research
+
+            spots = research.get_spot_prices(list(allowed_products))
+            suggestions: list[Suggestion] = []
+            seen: set[str] = set()
+            for raw_trade in raw_trades:
+                if not isinstance(raw_trade, dict):
+                    raise ValueError("each trade must be a JSON object")
+                product_id = str(raw_trade.get("product_id") or "")
+                if product_id not in allowed_products:
+                    raise ValueError(f"unsupported product_id: {product_id}")
+                if product_id in seen:
+                    raise ValueError(f"duplicate product_id: {product_id}")
+                seen.add(product_id)
+                trade_data = dict(raw_trade)
+                trade_data["product_id"] = product_id
+                rationale = str(trade_data.get("rationale") or "").strip()
+                if asset_preference and asset_preference.lower() not in rationale.lower():
+                    trade_data["rationale"] = (
+                        f"Asset preference: {asset_preference}\n\n{rationale}".strip()
+                    )
+                try:
+                    suggestion = _validate(
+                        trade_data,
+                        market_context=contexts_by_product[product_id],
+                        spots=spots,
+                    )
+                except (ValueError, KeyError, TypeError) as exc:
+                    logger.warning(
+                        "Rejected %s multi-asset decision: %s",
+                        product_id,
+                        exc,
+                    )
+                    rationale = f"parse_error: {exc}"
+                    if asset_preference:
+                        rationale = (
+                            f"Asset preference: {asset_preference}\n\n{rationale}"
+                        )
+                    suggestion = Suggestion.no_trade(
+                        rationale,
+                        product_id=product_id,
+                    )
+                suggestions.append(suggestion)
+            return suggestions
+        except json.JSONDecodeError as exc:
+            logger.warning("Malformed multi-asset JSON: %s | raw=%s", exc, raw_text[:500])
+            if attempt == 0:
+                feedback = f"{feedback}\n\n{_JSON_RETRY_HINT}" if feedback else _JSON_RETRY_HINT
+                continue
+            return []
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.warning("Malformed multi-asset suggestion: %s | raw=%s", exc, raw_text[:500])
+            return []
+
+    return []
 
 
 if __name__ == "__main__":

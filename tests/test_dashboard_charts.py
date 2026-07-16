@@ -328,7 +328,10 @@ class DashboardChartApiKindTests(unittest.TestCase):
             patch.object(config, "LEDGER_DB", self._db),
             patch.object(config, "CHARTS_DIR", self._charts),
             patch.object(config, "ROOT_DIR", root),
-            patch("dashboard.data.research.get_spot_price", return_value=2000.0),
+            patch(
+                "dashboard.data.research.get_spot_prices",
+                return_value={"ETH-USD": 2000.0, "BTC-USD": 60000.0},
+            ),
         ]
         for p in self._patches:
             p.start()

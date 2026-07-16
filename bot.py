@@ -7,9 +7,17 @@ import logging
 import re
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 import access
+import bot_config
 import chart_view
 import chat
 import config
@@ -18,25 +26,20 @@ import ledger
 import notify
 import paper
 import research
+import telegram_ui
 from research_reports import catalog as research_catalog
 from research_reports import router as research_router
 
 logger = logging.getLogger(__name__)
 
 PAYWALL_MESSAGE = (
-    "Access required to receive hourly ETH trade suggestions.\n\n"
+    "Access required to receive hourly trade suggestions.\n\n"
     "Contact us to subscribe. Once approved, your Telegram ID will be added to the allowlist."
 )
 
-WELCOME_MESSAGE = (
-    "Welcome to the ETH Trading Agent.\n\n"
-    "You will receive an hourly trade suggestion (chart + rationale) if a setup is found.\n"
-    "Reply anytime to ask about the latest suggestion — e.g. \"Why this entry?\" or "
-    "\"What would invalidate the trade?\" Use /chart to see the latest analysis chart.\n\n"
-    "Research: use /research for the topic catalog — market digest, funding, "
-    "volume, dominance, macro, and SFP pattern studies.\n\n"
-    "Paper PnL assumes a ${start:,.0f} starting portfolio with 25% of live equity deployed per trade. Not financial advice."
-)
+# Kept for any external imports; live copy lives in telegram_ui.
+WELCOME_MESSAGE = telegram_ui.WELCOME_MESSAGE
+
 
 def _is_research_query(text: str) -> bool:
     return research_catalog.is_research_query(text)
@@ -157,18 +160,21 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _reply(update, PAYWALL_MESSAGE)
         return
 
-    welcome = WELCOME_MESSAGE.format(start=config.PAPER_PORTFOLIO_VALUE)
-    spot = research.get_spot_price()
-    pnl = paper.format_pnl_footer(spot)
-    position_detail = paper.format_position_detail(spot)
+    spots = research.get_spot_prices()
+    pnl = paper.format_pnl_footer(spots=spots)
+    position_detail = paper.format_position_detail()
     latest = ledger.get_latest_trade_suggestion() or ledger.get_latest_suggestion()
 
-    lines = [welcome, ""]
+    lines = [telegram_ui.WELCOME_MESSAGE, ""]
     if position_detail:
         lines.append(position_detail)
         lines.append("")
     elif latest:
-        lines.append(f"Latest: {latest['action']} @ cycle {latest['cycle_id']}")
+        product = latest.get("product_id") or "ETH-USD"
+        lines.append(
+            f"Latest: {latest['action']} ({bot_config.product_label(product)}) "
+            f"@ cycle {latest['cycle_id']}"
+        )
         if latest.get("rationale"):
             rationale = notify.format_rationale_text(str(latest["rationale"]))
             max_len = 500
@@ -181,28 +187,91 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         lines.append(closed_detail)
         lines.append("")
     lines.append(pnl)
+    if config.DASHBOARD_PUBLIC_URL:
+        lines.append("")
+        lines.append(f"Portfolio dashboard: {config.DASHBOARD_PUBLIC_URL}")
 
-    await _reply(update, "\n".join(lines)[:4096])
+    await update.message.reply_text(
+        "\n".join(lines)[:4096],
+        reply_markup=telegram_ui.main_keyboard(),
+    )
+
+
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.from_user is None:
+        return
+    await query.answer()
+    user_id = query.from_user.id
+    access.register_user(user_id, query.from_user.username)
+    if not access.is_allowed(user_id):
+        await query.edit_message_text(PAYWALL_MESSAGE)
+        return
+
+    data = query.data or ""
+    chat_id = query.message.chat_id if query.message else user_id
+
+    if data == telegram_ui.CB_FUND:
+        result = paper.fund_user(user_id, query.from_user.username)
+        await context.bot.send_message(
+            chat_id,
+            telegram_ui.format_fund_result(result),
+            reply_markup=telegram_ui.main_keyboard(),
+        )
+        return
+
+    if data == telegram_ui.CB_METRICS:
+        spots = research.get_spot_prices()
+        metrics = paper.get_user_metrics(user_id, spots=spots)
+        await context.bot.send_message(
+            chat_id,
+            telegram_ui.format_metrics_message(metrics),
+            reply_markup=telegram_ui.main_keyboard(),
+        )
+        return
+
+    if data == telegram_ui.CB_RESEARCH:
+        catalog = research_router.build_catalog()
+        text = f"{telegram_ui.RESEARCH_HELP}\n\n{catalog}"
+        await context.bot.send_message(
+            chat_id,
+            text[:4096],
+            reply_markup=telegram_ui.main_keyboard(),
+        )
+        return
+
+    if data == telegram_ui.CB_REFRESH:
+        spots = research.get_spot_prices()
+        pnl = paper.format_pnl_footer(spots=spots)
+        text = f"{telegram_ui.WELCOME_MESSAGE}\n\n{pnl}"
+        if config.DASHBOARD_PUBLIC_URL:
+            text += f"\n\nPortfolio: {config.DASHBOARD_PUBLIC_URL}"
+        await context.bot.send_message(
+            chat_id,
+            text[:4096],
+            reply_markup=telegram_ui.main_keyboard(),
+        )
+        return
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    if user is None:
+    if user is None or update.message is None:
         return
 
     if not access.is_allowed(user.id):
         await _reply(update, PAYWALL_MESSAGE)
         return
 
-    await _reply(
-        update,
+    await update.message.reply_text(
         "Commands:\n"
-        "/start — welcome + latest status\n"
+        "/start — welcome + menu (Fund, My Metrics, Portfolio, Research)\n"
         "/status — current suggestion + paper PnL\n"
         "/chart — latest analysis chart + what the bot is watching\n"
         "/research — research topic catalog\n"
         "/help — this message\n\n"
         + research_router.build_catalog(),
+        reply_markup=telegram_ui.main_keyboard(),
     )
 
 
@@ -461,5 +530,6 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("chart", cmd_chart))
     app.add_handler(CommandHandler("research", cmd_research))
     app.add_handler(CommandHandler("macro", cmd_macro))
+    app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app

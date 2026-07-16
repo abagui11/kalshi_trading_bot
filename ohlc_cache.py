@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import config
 import research
 
-PRODUCT_ID = research.PRODUCT_ID
+PRODUCT_ID = research.PRODUCT_ID  # default ETH-USD
 DAILY_GRANULARITY = "ONE_DAY"
 HOURLY_GRANULARITY = "ONE_HOUR"
 
@@ -40,7 +40,12 @@ def init_cache() -> None:
         conn.commit()
 
 
-def upsert_candles(granularity: str, bars: list[dict]) -> int:
+def upsert_candles(
+    granularity: str,
+    bars: list[dict],
+    *,
+    product_id: str = PRODUCT_ID,
+) -> int:
     """Insert or replace candles. Returns number of rows written."""
     if not bars:
         return 0
@@ -54,7 +59,7 @@ def upsert_candles(granularity: str, bars: list[dict]) -> int:
             """,
             [
                 (
-                    PRODUCT_ID,
+                    product_id,
                     granularity,
                     str(bar["ts"]),
                     float(bar["open"]),
@@ -74,6 +79,8 @@ def get_candles(
     granularity: str,
     start_ts: str | None = None,
     end_ts: str | None = None,
+    *,
+    product_id: str = PRODUCT_ID,
 ) -> list[dict[str, float | str]]:
     """Return sorted candles from cache, optionally filtered by ISO ts bounds."""
     init_cache()
@@ -82,7 +89,7 @@ def get_candles(
         FROM candles
         WHERE product_id = ? AND granularity = ?
     """
-    params: list = [PRODUCT_ID, granularity]
+    params: list = [product_id, granularity]
     if start_ts:
         query += " AND ts >= ?"
         params.append(start_ts)

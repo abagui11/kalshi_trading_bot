@@ -31,6 +31,9 @@ def _sample_trade(**overrides):
         "take_profits": [3300.0],
         "risk_reward": 2.0,
         "eth_qty": 0.5,
+        "qty": 0.5,
+        "size_usd": 1600.0,
+        "product_label": "ETH",
         "order_block": None,
         "setup_tags": ["h4_ob"],
         "rationale": "Test rationale for structure.",
@@ -58,7 +61,10 @@ class DashboardUiSmokeTests(unittest.TestCase):
             patch.object(config, "LEDGER_DB", self._db),
             patch.object(config, "CHARTS_DIR", self._charts),
             patch.object(config, "ROOT_DIR", root),
-            patch("dashboard.data.research.get_spot_price", return_value=2000.0),
+            patch(
+                "dashboard.data.research.get_spot_prices",
+                return_value={"ETH-USD": 2000.0, "BTC-USD": 60000.0},
+            ),
             patch(
                 "dashboard.data.get_status_payload",
                 return_value={
@@ -156,8 +162,15 @@ class DashboardUiSmokeTests(unittest.TestCase):
         self.assertIn('id="chart-lightbox"', html)
         self.assertIn("zoomable", html)
         self.assertIn('title="Long position', html)
-        n_buttons = len(re.findall(r'<button type="button" class="trade-summary"', html))
-        n_bodies = len(re.findall(r'class="trade-body" hidden', html))
+        # Ignore the client-side "load more" card template embedded in <script>.
+        rendered_html = html.split("<script", 1)[0]
+        n_buttons = len(
+            re.findall(
+                r'<button type="button" class="trade-summary"',
+                rendered_html,
+            )
+        )
+        n_bodies = len(re.findall(r'class="trade-body" hidden', rendered_html))
         self.assertEqual(n_buttons, 2)
         self.assertEqual(n_bodies, 2)
 

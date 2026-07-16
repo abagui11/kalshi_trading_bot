@@ -56,7 +56,7 @@ def compute_risk_reward(
     return reward / risk
 
 
-def compute_eth_qty(
+def compute_order_notional_usd(
     entry: float,
     stop_loss: float,
     *,
@@ -64,11 +64,12 @@ def compute_eth_qty(
     portfolio_value: float | None = None,
     equity_usd: float | None = None,
     deploy_pct: float | None = None,
+    product_id: str = "ETH-USD",
 ) -> float:
-    """Fixed-fraction sizing: deploy ``deploy_pct`` (default ``TRADE_DEPLOY_PCT``) of equity.
+    """Fixed-fraction sizing in USD notional.
 
     Stop distance does not affect size (R/R is validated separately). The result
-    is capped by available cash and clamped to the MIN/MAX ETH guardrails.
+    is capped by available cash and clamped through per-product qty guardrails.
     ``stop_loss`` is accepted for signature stability but is intentionally unused.
     """
     if entry <= 0:
@@ -85,14 +86,42 @@ def compute_eth_qty(
     if notional <= 0:
         return 0.0
 
-    eth_qty = notional / entry
-    eth_qty = min(eth_qty, bot_config.MAX_ETH_QTY)
-    if eth_qty < bot_config.MIN_ETH_QTY:
-        min_notional = bot_config.MIN_ETH_QTY * entry
+    min_qty, max_qty = bot_config.qty_caps(product_id)
+    qty = notional / entry
+    qty = min(qty, max_qty)
+    if qty < min_qty:
+        min_notional = min_qty * entry
         if min_notional > available:
             return 0.0
-        eth_qty = bot_config.MIN_ETH_QTY
-    return eth_qty
+        qty = min_qty
+    return qty * entry
+
+
+def compute_eth_qty(
+    entry: float,
+    stop_loss: float,
+    *,
+    cash: float | None = None,
+    portfolio_value: float | None = None,
+    equity_usd: float | None = None,
+    deploy_pct: float | None = None,
+    product_id: str = "ETH-USD",
+) -> float:
+    """Backward-compatible helper returning asset qty from USD notional sizing."""
+    notional = compute_order_notional_usd(
+        entry,
+        stop_loss,
+        cash=cash,
+        portfolio_value=portfolio_value,
+        equity_usd=equity_usd,
+        deploy_pct=deploy_pct,
+        product_id=product_id,
+    )
+    return notional / entry if entry > 0 else 0.0
+
+
+# Backward-compatible alias.
+compute_qty = compute_eth_qty
 
 
 def validate_trade_risk(
@@ -101,14 +130,16 @@ def validate_trade_risk(
     *,
     cash: float | None = None,
     spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
 ) -> None:
     """Validate stop width, direction, R/R (recomputed), and fixed-fraction sizing.
 
     Sizing uses live paper equity (``portfolio_value`` / ``equity_usd``) when not
-    supplied explicitly. Pass ``spot_price`` so open-position mark-to-market is
-    included in the equity calculation.
+    supplied explicitly. Pass ``spot_price`` / ``spots`` so open-position
+    mark-to-market is included in the equity calculation.
 
     Overwrites ``suggestion.risk_reward`` and ``suggestion.size`` on success.
+    ``suggestion.size`` is USD notional; paper execution converts it to qty.
     """
     if suggestion.action not in TRADE_ACTIONS:
         return
@@ -118,13 +149,16 @@ def validate_trade_risk(
     take_profits = list(suggestion.take_profits)
     action = suggestion.action
     side = trade_side(action)
+    product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
 
     equity = portfolio_value
     available_cash = cash
     if equity is None or available_cash is None:
         import paper
 
-        resolved_equity, resolved_cash = paper.get_sizing_basis(spot_price)
+        resolved_equity, resolved_cash = paper.get_sizing_basis(
+            spot_price, spots=spots
+        )
         if equity is None:
             equity = resolved_equity
         if available_cash is None:
@@ -165,16 +199,17 @@ def validate_trade_risk(
 
     suggestion.risk_reward = round(rr, 4)
 
-    qty = compute_eth_qty(
+    notional = compute_order_notional_usd(
         entry,
         stop_loss,
         cash=available_cash,
         equity_usd=equity,
         deploy_pct=suggestion.deploy_pct,
+        product_id=product_id,
     )
-    if qty <= 0:
+    if notional <= 0:
         raise ValueError(
             f"cannot size trade for {bot_config.TRADE_DEPLOY_PCT:.0%} deployment on "
             f"${equity:,.0f} equity (entry {entry:,.2f}, stop {stop_loss:,.2f})"
         )
-    suggestion.size = round(qty, 4)
+    suggestion.size = round(notional, 2)
