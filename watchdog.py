@@ -547,8 +547,8 @@ def _build_rationale(
         ]
     )
     body = "\n".join(body_parts)
-    signals = critic.build_signals_block(ctx.alerts)
-    return critic.compose_rationale(body, signals)
+    context_block = critic.build_market_context_block(ctx.alerts)
+    return critic.compose_rationale(body, context_block)
 
 
 def _render_output_charts(

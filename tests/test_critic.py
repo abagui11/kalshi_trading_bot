@@ -8,6 +8,7 @@ from critic import (
     build_signals_block,
     compose_rationale,
     findings_require_retry,
+    list_context_conflicts,
     refine_suggestion,
     sanitize_rationale,
     split_rationale,
@@ -142,21 +143,30 @@ def test_json_h4_as_m5_ob_via_suggestion():
 
 
 def test_split_and_compose_rationale():
-    signals = "Signals: 24h range established: 1,550-1,630"
+    context = "Market context:\n• 24h range established: 1,550-1,630"
     llm = "HTF bearish. No valid M5 SFP in window."
-    full = compose_rationale(llm, signals)
+    full = compose_rationale(llm, context)
     body, block = split_rationale(full)
-    assert block == signals
+    assert block == context
     assert body == llm
+    assert full.startswith(llm)
+    assert "Market context:" in full
+
+
+def test_split_legacy_signals_prefix():
+    legacy = "Signals: 24h range established: 1,550-1,630\n\nHTF bearish."
+    body, block = split_rationale(legacy)
+    assert body == "HTF bearish."
+    assert block is not None and block.startswith("Signals:")
 
 
 def test_alert_text_not_audited_when_split():
     ctx = _base_context()
-    signals = build_signals_block(
+    context = build_signals_block(
         ["Price in bearish M5 OB fib zone 1,580.00-1,590.00"]
     )
     llm = "HTF structure bearish on H4. Waiting for setup."
-    full = compose_rationale(llm, signals)
+    full = compose_rationale(llm, context)
     llm_body, _ = split_rationale(full)
     findings = verify_deterministic(llm_body, ctx)
     assert not any(f.code == "M5_OB_MISLABEL" for f in findings)
@@ -240,3 +250,81 @@ def test_refine_suggestion_downgrades_failed_trade(monkeypatch):
     assert result.downgraded is True
     assert result.suggestion.action == "no_trade"
     assert result.suggestion.order_block is None
+
+
+def test_list_context_conflicts_short_vs_bullish_m5():
+    ctx = _base_context(setup_tags=["m5_ob_bullish_no_fib"])
+    notes = list_context_conflicts("spot_sell", ctx)
+    assert any("bullish M5 OB" in n for n in notes)
+
+
+def test_context_conflict_unacknowledged_on_short():
+    ctx = _base_context(setup_tags=["m5_ob_bullish_no_fib"])
+    suggestion = Suggestion.from_dict(
+        {
+            "action": "spot_sell",
+            "size": 0.5,
+            "entry": 1575.0,
+            "stop_loss": 1595.0,
+            "take_profits": [1550.0],
+            "risk_reward": 1.2,
+            "order_block": {
+                "low": 1570.0,
+                "high": 1590.0,
+                "start_ts": "2026-06-28T08:00:00Z",
+                "end_ts": "2026-06-28T08:00:00Z",
+            },
+        }
+    )
+    text = "Bearish M5 OB fib entry at 1575 — taking the short."
+    findings = verify_deterministic(text, ctx, suggestion=suggestion)
+    assert any(f.code == "CONTEXT_CONFLICT_UNACKNOWLEDGED" for f in findings)
+
+
+def test_context_conflict_acknowledged_passes():
+    ctx = _base_context(setup_tags=["m5_ob_bullish_no_fib"])
+    suggestion = Suggestion.from_dict(
+        {
+            "action": "spot_sell",
+            "size": 0.5,
+            "entry": 1575.0,
+            "stop_loss": 1595.0,
+            "take_profits": [1550.0],
+            "risk_reward": 1.2,
+            "order_block": {
+                "low": 1570.0,
+                "high": 1590.0,
+                "start_ts": "2026-06-28T08:00:00Z",
+                "end_ts": "2026-06-28T08:00:00Z",
+            },
+        }
+    )
+    text = (
+        "Despite price sitting in a bullish M5 OB, taking the short on a bearish "
+        "M5 SFP — HTF is advisory only and M5 trigger takes precedence."
+    )
+    findings = verify_deterministic(text, ctx, suggestion=suggestion)
+    assert not any(f.code == "CONTEXT_CONFLICT_UNACKNOWLEDGED" for f in findings)
+
+
+def test_watchdog_rationale_skips_context_conflict():
+    ctx = _base_context(setup_tags=["m5_ob_bullish_no_fib"])
+    suggestion = Suggestion.from_dict(
+        {
+            "action": "spot_sell",
+            "size": 0.5,
+            "entry": 1575.0,
+            "stop_loss": 1595.0,
+            "take_profits": [1550.0],
+            "risk_reward": 1.2,
+            "order_block": {
+                "low": 1570.0,
+                "high": 1590.0,
+                "start_ts": "2026-06-28T08:00:00Z",
+                "end_ts": "2026-06-28T08:00:00Z",
+            },
+        }
+    )
+    text = "[Watchdog — m5_ob_fib_short]\n\nPrice at M5 OB fib 0.25 tranche."
+    findings = verify_deterministic(text, ctx, suggestion=suggestion)
+    assert not any(f.code == "CONTEXT_CONFLICT_UNACKNOWLEDGED" for f in findings)

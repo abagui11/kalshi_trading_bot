@@ -88,8 +88,27 @@ CRITICAL_RETRY_CODES = frozenset({
     "RETEST_STATUS_CONFLICT",
     "RANGE_BREAK_CONFLICT",
     "KEY_LEVEL_MISMATCH",
+    "CONTEXT_CONFLICT_UNACKNOWLEDGED",
     "LLM_HALLUCINATION",
 })
+
+_LONG_ACTIONS = frozenset({"spot_buy", "deriv_buy"})
+_SHORT_ACTIONS = frozenset({"spot_sell", "deriv_sell"})
+_CONFLICT_ACK_RE = re.compile(
+    r"(?i)\b(?:"
+    r"despite|although|even\s+though|in\s+spite\s+of|"
+    r"contra(?:ry)?(?:\s+to)?|conflict(?:ing|s)?|"
+    r"against\s+(?:the\s+)?(?:HTF|bullish|bearish|primary)|"
+    r"HTF\s+(?:is\s+)?(?:advisory|bias\s+only|context\s+only)|"
+    r"advisory\s+(?:only|HTF|bias)|"
+    r"M5\s+(?:OB|SFP|trigger).{0,60}(?:takes?\s+)?precedence|"
+    r"does\s+not\s+block|not\s+a\s+(?:hard\s+)?(?:veto|block)|"
+    r"override|overrid(?:es|ing)|"
+    r"trade\s+anyway|still\s+(?:favor|take|enter|short|long|sell|buy)"
+    r")\b"
+)
+_MARKET_CONTEXT_MARKER = "Market context:"
+_LEGACY_SIGNALS_MARKER = "Signals:"
 
 
 @dataclass
@@ -157,32 +176,92 @@ def compute_chart_read_score(verdict: AuditVerdict) -> tuple[int, dict[str, Any]
     return score, breakdown
 
 
-def build_signals_block(alerts: list[str]) -> str | None:
-    """Format programmatic alerts for prepending to broadcast rationale."""
-    if not alerts:
+def build_market_context_block(alerts: list[str]) -> str | None:
+    """Format programmatic alerts as a Market context section (below thesis)."""
+    unique = list(dict.fromkeys(a.strip() for a in alerts if a and a.strip()))
+    if not unique:
         return None
-    return "Signals: " + " | ".join(alerts)
+    bullets = "\n".join(f"• {a}" for a in unique)
+    return f"{_MARKET_CONTEXT_MARKER}\n{bullets}"
+
+
+def build_signals_block(alerts: list[str]) -> str | None:
+    """Alias for ``build_market_context_block`` (legacy name)."""
+    return build_market_context_block(alerts)
 
 
 def split_rationale(full: str) -> tuple[str, str | None]:
-    """Split composed rationale into LLM body and optional Signals block."""
+    """Split composed rationale into thesis body and optional Market context block.
+
+    Supports legacy ``Signals:``-prepended format and current thesis-then-context format.
+    """
     text = full.strip()
-    if not text.startswith("Signals:"):
-        return text, None
-    parts = text.split("\n\n", 1)
-    if len(parts) == 1:
-        return "", parts[0]
-    return parts[1].strip(), parts[0].strip()
+    if not text:
+        return "", None
+    if text.startswith(_LEGACY_SIGNALS_MARKER):
+        parts = text.split("\n\n", 1)
+        if len(parts) == 1:
+            return "", parts[0]
+        return parts[1].strip(), parts[0].strip()
+    marker = f"\n\n{_MARKET_CONTEXT_MARKER}"
+    if marker in text:
+        body, ctx = text.split(marker, 1)
+        return body.strip(), f"{_MARKET_CONTEXT_MARKER}{ctx}"
+    if text.startswith(_MARKET_CONTEXT_MARKER):
+        return "", text
+    return text, None
 
 
-def compose_rationale(llm_body: str, signals_block: str | None) -> str:
-    """Combine LLM rationale with programmatic Signals block."""
+def compose_rationale(llm_body: str, context_block: str | None) -> str:
+    """Combine trade thesis with programmatic Market context (context below thesis)."""
     body = llm_body.strip()
-    if not signals_block:
+    if not context_block:
         return body
     if not body:
-        return signals_block
-    return f"{signals_block}\n\n{body}"
+        return context_block
+    return f"{body}\n\n{context_block}"
+
+
+def list_context_conflicts(action: str, ctx: MarketContext) -> list[str]:
+    """Human-readable notes when trade action opposes programmatic market context."""
+    if action not in _TRADE_ACTIONS:
+        return []
+    tags = set(ctx.setup_tags or [])
+    conflicts: list[str] = []
+    snap = ctx.zone_snapshot
+    is_long = action in _LONG_ACTIONS
+    is_short = action in _SHORT_ACTIONS
+
+    if is_short:
+        if "m5_ob_bullish_in_fib" in tags or "m5_ob_bullish_no_fib" in tags:
+            conflicts.append(
+                "price is inside a bullish M5 OB (long-side structure) while action is short"
+            )
+        if snap and snap.primary_bullish and not snap.primary_bearish:
+            conflicts.append(
+                "primary H4 zone is bullish while action is short (HTF advisory conflict)"
+            )
+    elif is_long:
+        if "m5_ob_bearish_in_fib" in tags or "m5_ob_bearish_no_fib" in tags:
+            conflicts.append(
+                "price is inside a bearish M5 OB (short-side structure) while action is long"
+            )
+        if snap and snap.primary_bearish and not snap.primary_bullish:
+            conflicts.append(
+                "primary H4 zone is bearish while action is long (HTF advisory conflict)"
+            )
+
+    return conflicts
+
+
+def _is_watchdog_rationale(text: str) -> bool:
+    head = text.lstrip()[:120]
+    return head.startswith("[Watchdog") or "[Watchdog —" in head or "[Watchdog -" in head
+
+
+def rationale_acknowledges_conflicts(text: str) -> bool:
+    """True when thesis language acknowledges trading against conflicting context."""
+    return bool(_CONFLICT_ACK_RE.search(text or ""))
 
 
 def findings_require_retry(findings: list[AuditFinding]) -> bool:
@@ -308,12 +387,25 @@ def format_combined_feedback(
     critical = _collect_refine_findings(deterministic, llm_hallucinations)
     if not critical:
         critical = deterministic + llm_hallucinations
-    lines = [
-        "Your prior suggestion failed fact-check. Fix factual errors; cite ONLY "
-        "structures listed in programmatic context. Return no_trade if a verified "
-        "entry cannot be formed.",
-        "",
-    ]
+    conflict_only = (
+        critical
+        and all(f.code == "CONTEXT_CONFLICT_UNACKNOWLEDGED" for f in critical)
+    )
+    if conflict_only:
+        lines = [
+            "Your trade action conflicts with programmatic market context. Keep the same "
+            "valid M5 entry if justified, but the rationale MUST briefly explain why you "
+            "still take the trade despite the conflicting context (e.g. M5 OB/SFP takes "
+            "precedence; HTF is advisory only). Do not invent structures.",
+            "",
+        ]
+    else:
+        lines = [
+            "Your prior suggestion failed fact-check. Fix factual errors; cite ONLY "
+            "structures listed in programmatic context. Return no_trade if a verified "
+            "entry cannot be formed.",
+            "",
+        ]
     lines.extend(f"- {f.code}: {f.message}" for f in critical)
     return "\n".join(lines)
 
@@ -712,16 +804,45 @@ def _check_h4_as_order_block_json(ctx: MarketContext, suggestion: Suggestion | N
     return None
 
 
+def _check_context_conflict(
+    text: str,
+    ctx: MarketContext,
+    suggestion: Suggestion | None,
+) -> AuditFinding | None:
+    """Require LLM thesis to acknowledge action-vs-context conflicts (skip watchdog)."""
+    if suggestion is None or suggestion.action not in _TRADE_ACTIONS:
+        return None
+    if _is_watchdog_rationale(text):
+        return None
+    conflicts = list_context_conflicts(suggestion.action, ctx)
+    if not conflicts:
+        return None
+    if rationale_acknowledges_conflicts(text):
+        return None
+    return AuditFinding(
+        code="CONTEXT_CONFLICT_UNACKNOWLEDGED",
+        message=(
+            "Trade action conflicts with market context; rationale must briefly explain "
+            "why the trade is still taken despite: " + "; ".join(conflicts)
+        ),
+    )
+
+
 def verify_deterministic(
     text: str,
     ctx: MarketContext,
     suggestion: Suggestion | None = None,
 ) -> list[AuditFinding]:
     """Rule-based fact checks against programmatic market context."""
-    if not text.strip():
-        return []
-
     findings: list[AuditFinding] = []
+
+    conflict = _check_context_conflict(text, ctx, suggestion)
+    if conflict is not None:
+        findings.append(conflict)
+
+    if not text.strip():
+        return findings
+
     findings.extend(_check_m5_ob_bounds(text, ctx))
     findings.extend(_check_h4_zone_bounds(text, ctx))
     findings.extend(_check_sfp_presence(text, ctx))

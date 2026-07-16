@@ -121,6 +121,7 @@ When the M5 chart shows structure similar to this reference screenshot, the agen
 2. **Identify ranging conditions** when price oscillates inside the 24h range without a clean trend.
 3. **Identify the potential order block** — use **H4 OB/BRKR boxes** on the marked charts when present; they are detected programmatically from H4 structure and cited for **HTF bias only**. For **entries**, use **M5 OBs** from programmatic context (`Detected M5 order blocks`) or infer on M5 using the same displacement rules.
 4. **Alert a potential short inside the M5 OB entry band** on a valid M5 OB/SFP trigger (e.g., bearish M5 OB retest in the **0.25–0.50** zone with R/R ≥ 1.0). Cite H4 for context; do **not** skip the short solely because H4 is still bullish. Being inside an H4 OB alone is not sufficient for entry.
+5. **Acknowledge context conflicts in `rationale`** — if the action opposes programmatic market context (e.g. short while price sits in a bullish M5 OB, or long against a primary bearish H4 zone), briefly say why the trade is still taken (M5 OB/SFP precedence; HTF advisory only). Do not invent opposing structure that is not in context.
 
 **Deviations / Adjustments:**
 

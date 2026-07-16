@@ -117,7 +117,7 @@ flowchart TD
     OK -->|yes, passes left| RETRY[propose_trade retry<br/>with audit_feedback]
     RETRY --> REF
     OK -->|exhausted passes| DOWN[downgrade / sanitize → no_trade]
-    OK -->|no| CR[compose_rationale<br/>llm_body + Signals block]
+    OK -->|no| CR[compose_rationale<br/>thesis then Market context]
     DOWN --> CR
 
     CR --> OC[build_output_charts]
@@ -220,7 +220,7 @@ Legend: ✅ done · 🟡 in progress · 🔧 needs work · ⬜ planned · ⚠️
 | Hourly cycle | `agent.py` | ✅ | |
 | Trade proposal (LLM) | `analyze.py` | ✅ | JSON retry + `_validate` |
 | Trade risk validation | `validate.py` | ✅ | stop dist, R/R, sizing |
-| Refine / critic loop | `critic.py` | ✅ | pre-broadcast retries; post-cycle monitor |
+| Refine / critic loop | `critic.py` | ✅ | pre-broadcast retries; context-conflict ack; thesis + Market context compose; post-cycle monitor |
 | Watchdog | `watchdog.py` | ✅ | M5 OB fib / SFP triggers (no HTF hard-gate); cooldown; macro soft gates |
 | Macro context | `macro/` | ✅ | RSS poll, webhook ingest, keyword→Haiku classify, pulse, dashboard |
 | Chat Q&A | `bot.py`, `chat.py` | ✅ | snapshot-grounded + chat audit |
@@ -279,6 +279,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-16 | Broadcast UX: thesis first (“Why this trade”), programmatic alerts relabeled **Market context** below. Hourly refine requires `CONTEXT_CONFLICT_UNACKNOWLEDGED` acknowledgment when action opposes context (opposite M5 OB / opposite-only primary H4); watchdog skipped. |
 | 2026-07-14 | Dashboard chart lightbox: click thumbs / H4 / M5 charts to enlarge (Esc / backdrop / × to close). |
 | 2026-07-14 | Dashboard tag tooltips filled from Trading Guide (ranging, H4/M5 SFP, M5 OB fib, macro gates); macro feed widened to 640px. |
 | 2026-07-14 | Dashboard journal layout fix: trade summary button is the flex row (avoids nested-flex-in-button bugs), fixed `.trade-thumb-wrap` frames, full-width cards, cache-busted CSS. |

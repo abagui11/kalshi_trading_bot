@@ -139,6 +139,10 @@ def _build_user_content(
                 "never label an H4 box as 'M5 OB'. HTF is advisory, not a hard veto on M5 setups. "
                 "Structure rationale as short paragraphs (HTF structure, H4 supply/demand, "
                 "LTF/M5 OB context, trade decision) separated by blank lines. "
+                "If the trade action conflicts with programmatic market context "
+                "(e.g. short while price is inside a bullish M5 OB, or long against a primary "
+                "bearish H4 zone), briefly say why you still take it (M5 trigger precedence / "
+                "HTF advisory only). "
                 "Return one JSON trade suggestion. JSON only."
             ),
         },

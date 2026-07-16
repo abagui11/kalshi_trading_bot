@@ -58,8 +58,8 @@ def run_cycle() -> tuple[Suggestion, list[str]] | None:
         )
         suggestion = refine.suggestion
         llm_body = refine.llm_body
-        signals_block = critic.build_signals_block(market_context.alerts)
-        suggestion.rationale = critic.compose_rationale(llm_body, signals_block)
+        context_block = critic.build_market_context_block(market_context.alerts)
+        suggestion.rationale = critic.compose_rationale(llm_body, context_block)
 
         output_paths = charts.build_output_charts(
             suggestion,
@@ -96,7 +96,7 @@ def run_cycle() -> tuple[Suggestion, list[str]] | None:
                 suggestion,
                 marked_paths,
                 llm_rationale=llm_body,
-                signals_block=signals_block,
+                signals_block=context_block,
             )
             verdict = critic.audit_hourly_cycle(
                 cycle_id,

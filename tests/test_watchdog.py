@@ -173,9 +173,14 @@ class WatchdogTriggerTests(unittest.TestCase):
             priority=70,
         )
         rationale = _build_rationale(trigger, ctx, _bullish_ob(), spot)
-        self.assertIn("Signals:", rationale)
+        self.assertIn("Market context:", rationale)
         self.assertIn("HTF context:", rationale)
         self.assertIn("Aligned long setup", rationale)
+        # Thesis comes before Market context
+        self.assertLess(
+            rationale.index("Aligned long setup"),
+            rationale.index("Market context:"),
+        )
 
     def test_htf_conflict_does_not_block_long(self) -> None:
         ob = _bullish_ob()

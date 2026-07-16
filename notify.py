@@ -11,7 +11,7 @@ from telegram import Bot
 import access
 import config
 import paper
-from critic import AuditVerdict
+from critic import AuditVerdict, split_rationale
 from models import Suggestion
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ def build_caption(suggestion: Suggestion) -> str:
     tps = ", ".join(f"{tp:,.2f}" for tp in suggestion.take_profits[:3]) or "n/a"
     rr = f"{suggestion.risk_reward:.2f}" if suggestion.risk_reward is not None else "n/a"
     prefix = ""
-    if suggestion.rationale.strip().startswith("[Watchdog"):
+    if "[Watchdog" in suggestion.rationale:
         prefix = "WATCHDOG — "
     return (
         f"{prefix}{suggestion.action.upper()}\n"
@@ -62,12 +62,21 @@ def build_caption(suggestion: Suggestion) -> str:
 
 
 def build_rationale_message(suggestion: Suggestion, pnl_footer: str) -> str:
-    """Full rationale + PnL as a follow-up text message."""
+    """Full thesis + Market context + PnL as a follow-up text message."""
     parts: list[str] = []
-    if suggestion.rationale.strip():
+    raw = suggestion.rationale.strip()
+    if raw:
         header = "NO TRADE" if suggestion.action == "no_trade" else suggestion.action.upper()
-        formatted = format_rationale_text(suggestion.rationale)
-        parts.append(f"{header}\n\nRationale:\n{formatted}")
+        body, context_block = split_rationale(raw)
+        why_label = "Why no trade:" if suggestion.action == "no_trade" else "Why this trade:"
+        sections = [header]
+        if body:
+            sections.append(f"{why_label}\n{format_rationale_text(body)}")
+        if context_block:
+            sections.append(format_rationale_text(context_block))
+        elif not body:
+            sections.append(f"{why_label}\n{format_rationale_text(raw)}")
+        parts.append("\n\n".join(sections))
     parts.append(pnl_footer)
     return "\n\n".join(parts)[:4096]
 

@@ -503,6 +503,7 @@ def build_market_context(
             "- Setup phase name records workflow history; retest status (rolling 24h) is recomputed each cycle — do not treat them as the same.",
             "- If setup state is bearish_retest_rejected or short_trigger_retest, strongly favor SHORT.",
             "- HTF zone overlap is informational only — do NOT block a valid M5 OB/SFP entry because HTF looks conflicted or bullish.",
+            "- If action conflicts with market context (opposite M5 OB near price, or opposite-only primary H4 zone), still allow the trade when M5 entry is valid, but the rationale MUST briefly acknowledge the conflict and why M5 takes precedence.",
             "- Only cite SFPs listed under Recent H4/M5 SFPs; do not cite Live-invalidated SFPs.",
             "- Trades: structure_chart=H4, entry_chart=M5 unless exceptional.",
             "",
