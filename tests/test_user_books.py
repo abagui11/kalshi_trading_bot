@@ -220,6 +220,47 @@ class DecisionChartTests(unittest.TestCase):
             self.assertTrue(Path(path).exists())
             self.assertIn("decision", path)
 
+    def test_build_decision_chart_short_forward_bands(self) -> None:
+        """Short setup still renders; bands are forward of last bar (smoke)."""
+        import charts
+
+        bars = []
+        base = datetime(2026, 7, 19, tzinfo=timezone.utc)
+        price = 64800.0
+        for i in range(30):
+            ts = (base + timedelta(minutes=5 * i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            bars.append(
+                {
+                    "ts": ts,
+                    "open": price,
+                    "high": price + 40,
+                    "low": price - 40,
+                    "close": price - 5,
+                    "volume": 2.0,
+                }
+            )
+            price -= 2
+        suggestion = Suggestion(
+            action="spot_sell",
+            size=250.0,
+            entry=64862.83,
+            stop_loss=65027.0,
+            take_profits=[64238.08],
+            risk_reward=2.0,
+            rationale="test short",
+            product_id="BTC-USD",
+        )
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            charts_dir = Path(tmp)
+            with patch.object(config, "CHARTS_DIR", charts_dir):
+                path = charts.build_decision_chart(
+                    suggestion, {"M5": bars}, "testcycle_BTC"
+                )
+            self.assertIsNotNone(path)
+            assert path is not None
+            self.assertTrue(Path(path).exists())
+
+
 
 if __name__ == "__main__":
     unittest.main()

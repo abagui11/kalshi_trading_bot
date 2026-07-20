@@ -659,7 +659,11 @@ def build_decision_chart(
   data: dict[str, list[dict]],
   cycle_id: str,
 ) -> str | None:
-  """Tinder-style profile chart: clean candles + red SL band + green TP1 band."""
+  """Tinder-style profile chart: clean candles + forward SL/TP1 risk bands.
+
+  Risk/reward rectangles sit to the *right* of the latest candle (forward
+  projection), not overlaid across historical price action.
+  """
   if suggestion.action == "no_trade":
     return None
   if suggestion.entry is None or suggestion.stop_loss is None:
@@ -689,8 +693,14 @@ def build_decision_chart(
   entry = float(suggestion.entry)
   stop = float(suggestion.stop_loss)
   tp1 = float(suggestion.take_profits[0])
-  x0 = -0.5
-  width = len(df) + 0.5
+
+  n = len(df)
+  # Start at the right edge of the last candle; extend into empty forward space.
+  x_start = float(n) - 0.5
+  forward = max(14, n // 3)
+  x_end = x_start + float(forward)
+  width = x_end - x_start
+  x_mid = (x_start + x_end) / 2.0
 
   downside_low = min(entry, stop)
   downside_high = max(entry, stop)
@@ -699,29 +709,74 @@ def build_decision_chart(
 
   ax_price.add_patch(
     Rectangle(
-      (x0, downside_low),
+      (x_start, downside_low),
       width,
       max(downside_high - downside_low, 1e-9),
       facecolor="#CC0000",
       edgecolor="none",
-      alpha=0.22,
+      alpha=0.28,
       zorder=2,
+      clip_on=False,
     )
   )
   ax_price.add_patch(
     Rectangle(
-      (x0, upside_low),
+      (x_start, upside_low),
       width,
       max(upside_high - upside_low, 1e-9),
       facecolor="#228B22",
       edgecolor="none",
-      alpha=0.22,
+      alpha=0.28,
       zorder=2,
+      clip_on=False,
     )
   )
-  _draw_price_line(ax_price, entry, "Entry", "#111111", "-", label_side="left")
-  _draw_price_line(ax_price, stop, "SL", "#CC0000", "-", label_side="right")
-  _draw_price_line(ax_price, tp1, "TP1", "#228B22", "-", label_side="right")
+
+  def _fwd_level(price: float, text: str, color: str) -> None:
+    ax_price.hlines(
+      price,
+      x_start,
+      x_end,
+      colors=color,
+      linestyles="-",
+      linewidth=1.8,
+      alpha=0.95,
+      zorder=3,
+    )
+    ax_price.text(
+      x_mid,
+      price,
+      text,
+      color=color,
+      fontsize=FONT_SIZE,
+      fontweight="bold",
+      va="center",
+      ha="center",
+      zorder=4,
+      bbox=dict(
+        boxstyle="round,pad=0.2",
+        facecolor="white",
+        edgecolor=color,
+        alpha=0.85,
+      ),
+      clip_on=False,
+    )
+
+  _fwd_level(entry, f"Entry {entry:,.2f}", "#111111")
+  _fwd_level(stop, f"SL {stop:,.2f}", "#CC0000")
+  _fwd_level(tp1, f"TP1 {tp1:,.2f}", "#228B22")
+
+  # Leave blank runway to the right of price action (TradingView-style).
+  for ax in fig.axes:
+    ax.set_xlim(-0.5, x_end)
+
+  # Keep SL / TP1 in view even when outside the candle window.
+  y0, y1 = ax_price.get_ylim()
+  pad = max((y1 - y0) * 0.04, abs(entry) * 0.001)
+  ax_price.set_ylim(
+    min(y0, downside_low, upside_low) - pad,
+    max(y1, downside_high, upside_high) + pad,
+  )
 
   out_dir = _ensure_charts_dir()
   out_path = out_dir / f"{cycle_id}_{slug}_{entry_tf}_decision.png"

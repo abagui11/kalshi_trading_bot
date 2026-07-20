@@ -3,7 +3,7 @@
 > Single source of truth for architecture and status of the Telegram trading bot.
 > See **Documentation maintenance** below — update this file (and related deploy docs) whenever behaviour changes.
 
-**Last updated:** 2026-07-19
+**Last updated:** 2026-07-20
 
 ---
 
@@ -334,6 +334,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-20 | Decision chart risk/reward rectangles sit ahead of the last candle (forward runway) instead of overlaying full history. |
 | 2026-07-19 | History vault + grounded SFP Q&A: multi-product `ohlc_cache` (ETH/BTC H1/D1), `sfp_events` index, `/research d1_sfps` + `w1_invalidations`, clarify/refuse for unindexed patterns; ETH Z-Move broadcasts (`\|z\|≥2` price/volume, 168h lookback, 2h cooldown). |
 | 2026-07-19 | Opt-in personal books: Open account menu ($500/$1k/$2.5k); house book stays public journal; Accept/Reject (15m) + decision chart; `/me` magic-link ledger; missed-connection Join at +0.5R; migrate legacy Funders to $1k accounts. |
 | 2026-07-16 | Per-product HTF OB min-width: BTC uses 0.60% (ETH stays 1.25%) so BTC H4 OB/breaker boxes are not over-filtered by ETH-tuned volatility. |
