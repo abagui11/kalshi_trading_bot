@@ -306,7 +306,7 @@ class DecisionChartTests(unittest.TestCase):
         # Window expands to min_bars when source+buffer would be shorter.
         self.assertEqual(window[0]["ts"], bars[200 - len(window)]["ts"])
 
-    def test_decision_window_old_source_prefers_recent(self) -> None:
+    def test_decision_window_includes_old_source_within_300_bars(self) -> None:
         import charts
 
         bars = []
@@ -326,10 +326,35 @@ class DecisionChartTests(unittest.TestCase):
             )
         source = bars[20]["ts"]
         window = charts._decision_window_bars(bars, source_ts=source)
-        self.assertEqual(len(window), 120)
+        self.assertEqual(len(window), 192)
         self.assertEqual(window[-1]["ts"], bars[-1]["ts"])
-        # Old source is outside the recent max window.
-        self.assertNotIn(source, {b["ts"] for b in window})
+        self.assertIn(source, {b["ts"] for b in window})
+
+    def test_decision_window_includes_tp_reference_candle(self) -> None:
+        import charts
+
+        bars = []
+        base = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        for i in range(200):
+            price = 100.0 if i == 30 else 120.0
+            bars.append(
+                {
+                    "ts": (base + timedelta(minutes=5 * i)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                    "open": price,
+                    "high": price + 1.0,
+                    "low": price - 1.0,
+                    "close": price,
+                    "volume": 1.0,
+                }
+            )
+        window = charts._decision_window_bars(
+            bars,
+            reference_levels=[100.0],
+        )
+        self.assertEqual(window[-1]["ts"], bars[-1]["ts"])
+        self.assertIn(bars[30]["ts"], {b["ts"] for b in window})
 
     def test_decision_window_default_clamp(self) -> None:
         import charts

@@ -267,7 +267,7 @@ Legend: ✅ done · 🟡 in progress · 🔧 needs work · ⬜ planned · ⚠️
 | Paper trading | `paper.py` | ✅ | house multi-asset book; fixed 25% deploy; qty caps; FIFO; staged TP scale-out; outcome charts |
 | Personal books | `user_books.py` | ✅ | open-account sizes; offers; Accept/Reject/expire; late-join; user SL/TP; `/me` tokens; `display_summary` on offers |
 | Telegram beta UI | `bot.py`, `telegram_ui.py`, `display_summary.py` | ✅ | Open account / My Metrics / My book / Journal / Research; trade Yes/No/Join/See more; concise cards |
-| Decision chart | `charts.build_decision_chart` | ✅ | clean candles + red SL / green TP1 bands with % annotations; source-aware M5 history |
+| Decision chart | `charts.build_decision_chart` | ✅ | clean candles + red SL / green TP1 bands with % annotations; source/SL/TP-reference-aware M5 history (up to 300 bars) |
 | Dashboard | `dashboard/` | ✅ | public agent journal + participation aggregates; `/me` personal ledger |
 | Live execution | `execute.py` | ⬜ | shadow/live path not built |
 | OHLC history cache | `ohlc_cache.py` | ✅ | research/backfill; ETH+BTC H1/D1; not hot path |
@@ -336,6 +336,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-21 | Decision-card history now expands up to 300 M5 bars to include the setup source and most recent candles that traded through SL/TP1; this makes the origin of projected levels visible when available in Coinbase history. |
 | 2026-07-21 | Friendly Telegram trade cards: decision chart + concise caption (price-move % to TP1/SL, hybrid LLM setup blurb with deterministic fallback); Accept/Reject/See more; full rationale + structure/entry charts deferred to See more; `display_summary` on `trade_offers`; source-aware decision-chart history. Canonical rationale/audit unchanged. |
 | 2026-07-20 | Decision chart risk/reward rectangles sit ahead of the last candle (forward runway) instead of overlaying full history. |
 | 2026-07-19 | History vault + grounded SFP Q&A: multi-product `ohlc_cache` (ETH/BTC H1/D1), `sfp_events` index, `/research d1_sfps` + `w1_invalidations`, clarify/refuse for unindexed patterns; ETH Z-Move broadcasts (`\|z\|≥2` price/volume, 168h lookback, 2h cooldown). |

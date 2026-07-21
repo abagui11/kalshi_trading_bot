@@ -658,14 +658,17 @@ def _decision_window_bars(
   bars: list[dict],
   *,
   source_ts: str | None = None,
+  reference_levels: list[float] | None = None,
   min_bars: int = 72,
-  max_bars: int = 120,
+  max_bars: int = 300,
   pre_event_buffer: int = 12,
 ) -> list[dict]:
-  """Slice M5 bars so the setup source stays visible when possible.
+  """Slice M5 bars so setup and level-reference candles stay visible.
 
-  Always ends at the latest bar. If the source is older than ``max_bars``,
-  prefer recent price action (HTF proof charts cover older context).
+  Always ends at the latest bar. The start expands to include the setup
+  source and the most recent prior candle that traded through SL / TP1.
+  If context is older than ``max_bars``, prefer recent price action (HTF
+  proof charts cover older context).
   """
   if not bars:
     return bars
@@ -686,10 +689,25 @@ def _decision_window_bars(
           source_idx = i
           break
 
-  if source_idx is None:
+  context_indices = [source_idx] if source_idx is not None else []
+  for raw_level in reference_levels or []:
+    level = float(raw_level)
+    # Most recent historical candle that actually traded through the level.
+    for i in range(n - 1, -1, -1):
+      bar = bars[i]
+      try:
+        low = float(bar["low"])
+        high = float(bar["high"])
+      except (KeyError, TypeError, ValueError):
+        continue
+      if low <= level <= high:
+        context_indices.append(i)
+        break
+
+  if not context_indices:
     return bars[-default_n:]
 
-  start = max(0, source_idx - pre_event_buffer)
+  start = max(0, min(context_indices) - pre_event_buffer)
   if end - start < min_bars:
     start = max(0, end - min_bars)
   if end - start > max_bars:
@@ -729,7 +747,14 @@ def build_decision_chart(
   if src is None:
     ob = suggestion.order_block or {}
     src = ob.get("start_ts") or ob.get("displacement_ts") or ob.get("end_ts")
-  window = _decision_window_bars(bars, source_ts=str(src) if src else None)
+  window = _decision_window_bars(
+    bars,
+    source_ts=str(src) if src else None,
+    reference_levels=[
+      float(suggestion.stop_loss),
+      float(suggestion.take_profits[0]),
+    ],
+  )
   df = _to_mpf_df(window)
   label = _chart_label(getattr(suggestion, "product_id", None))
   slug = _product_slug(getattr(suggestion, "product_id", None))
