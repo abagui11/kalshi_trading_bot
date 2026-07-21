@@ -227,6 +227,22 @@ sudo -u ethagent /opt/eth-trading-agent/.venv/bin/python \
 
 **Back up first:** `cp /opt/eth-trading-agent/ledger.db ~/ledger-backup-$(date +%Y%m%d).db`
 
+### Re-score macro headlines after a keyword change
+
+Keyword edits (e.g. promoting CLARITY Act / legislative catalysts in `macro/keywords.py`) only affect headlines ingested **after** the change. Headlines already stored as `ignored` keep their old score and are skipped by the 7-day URL-hash dedup, so they never resurface. After deploying a keyword change, backfill the recent window so already-captured headlines get promoted:
+
+```bash
+# Preview (no writes)
+sudo -u ethagent /opt/eth-trading-agent/.venv/bin/python \
+  /opt/eth-trading-agent/deploy/rescore_macro_events.py --days 5 --dry-run
+
+# Apply (re-scores + classifies newly-promoted headlines)
+sudo -u ethagent /opt/eth-trading-agent/.venv/bin/python \
+  /opt/eth-trading-agent/deploy/rescore_macro_events.py --days 5 --yes
+```
+
+Promoted rows are classified via Haiku and flipped to `classified`, so they show up in active posture and `/research macro`. Use `--no-classify` to only refresh keyword scores.
+
 ### View logs
 
 ```bash
