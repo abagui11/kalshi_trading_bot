@@ -72,6 +72,7 @@ CHARTS_DIR: Path = ROOT_DIR / "charts"
 LEDGER_DB: Path = ROOT_DIR / "ledger.db"
 OHLC_DB: Path = ROOT_DIR / "ohlc.db"
 SECRETS_DIR: Path = ROOT_DIR / "secrets"
+TRADING_GUIDE_DIR: Path = ROOT_DIR / "Trading Guide"
 
 DASHBOARD_PUBLIC_URL: str | None = _optional("DASHBOARD_PUBLIC_URL")
 DASHBOARD_PORT: int = int(os.getenv("DASHBOARD_PORT", "8081") or "8081")

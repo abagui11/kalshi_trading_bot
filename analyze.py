@@ -130,26 +130,28 @@ def _build_user_content(
     market_context: MarketContext | None = None,
     audit_feedback: str | None = None,
     product_id: str | None = None,
+    user_preamble: str | None = None,
 ) -> list[dict]:
     product_id = product_id or bot_config.DEFAULT_PRODUCT_ID
+    intro = user_preamble or (
+        f"Analyze live {product_id} marked charts and apply the Trading Guide strategy. "
+        "Compare live structure to all reference pattern images below. "
+        "Cite H4 OB/BRKR for HTF context and M5 OB (with fib zone) for entries — "
+        "never label an H4 box as 'M5 OB'. HTF is advisory, not a hard veto on M5 setups. "
+        "Structure rationale as short paragraphs (HTF structure, H4 supply/demand, "
+        "LTF/M5 OB context, trade decision) separated by blank lines. "
+        "If the trade action conflicts with programmatic market context "
+        "(e.g. short while price is inside a bullish M5 OB, or long against a primary "
+        "bearish H4 zone), briefly say why you still take it (M5 trigger precedence / "
+        "HTF advisory only). "
+        "Include macro_note (string) when Macro context is present — acknowledge "
+        "active headlines or state they are not material. "
+        "Return one JSON trade suggestion. JSON only."
+    )
     content: list[dict] = [
         {
             "type": "text",
-            "text": (
-                f"Analyze live {product_id} marked charts and apply the Trading Guide strategy. "
-                "Compare live structure to all reference pattern images below. "
-                "Cite H4 OB/BRKR for HTF context and M5 OB (with fib zone) for entries — "
-                "never label an H4 box as 'M5 OB'. HTF is advisory, not a hard veto on M5 setups. "
-                "Structure rationale as short paragraphs (HTF structure, H4 supply/demand, "
-                "LTF/M5 OB context, trade decision) separated by blank lines. "
-                "If the trade action conflicts with programmatic market context "
-                "(e.g. short while price is inside a bullish M5 OB, or long against a primary "
-                "bearish H4 zone), briefly say why you still take it (M5 trigger precedence / "
-                "HTF advisory only). "
-                "Include macro_note (string) when Macro context is present — acknowledge "
-                "active headlines or state they are not material. "
-                "Return one JSON trade suggestion. JSON only."
-            ),
+            "text": intro,
         },
         {"type": "text", "text": OVERLAY_LEGEND},
     ]
@@ -476,13 +478,22 @@ def propose_trade(
     market_context: MarketContext | None = None,
     audit_feedback: str | None = None,
     product_id: str | None = None,
+    *,
+    validate_fn=None,
+    user_preamble: str | None = None,
 ) -> Suggestion:
-    """Single Claude call: chart images + Trading Guide -> Suggestion (or no_trade on failure)."""
+    """Single Claude call: chart images + Trading Guide -> Suggestion (or no_trade on failure).
+
+    ``validate_fn`` optional override (e.g. Kalshi ICT fib gate without spot R/R sizing).
+    """
     product_id = product_id or bot_config.DEFAULT_PRODUCT_ID
     guide_text = trading_guide if trading_guide is not None else load_trading_guide()
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     feedback = audit_feedback
     last_exc: Exception | None = None
+    validator = validate_fn or (
+        lambda data, ctx: _validate(data, market_context=ctx)
+    )
 
     for attempt in range(2):
         try:
@@ -504,6 +515,7 @@ def propose_trade(
                             market_context,
                             audit_feedback=feedback,
                             product_id=product_id,
+                            user_preamble=user_preamble,
                         ),
                     }
                 ],
@@ -520,7 +532,11 @@ def propose_trade(
         try:
             data = _extract_json(raw_text)
             data["product_id"] = product_id
-            return _validate(data, market_context=market_context)
+            if validate_fn is not None:
+                suggestion = Suggestion.from_dict(data)
+                _validate_chart_fields(suggestion)
+                return validate_fn(suggestion, market_context)
+            return validator(data, market_context)
         except json.JSONDecodeError as exc:
             last_exc = exc
             logger.warning("Malformed JSON suggestion: %s | raw=%s", exc, raw_text[:500])

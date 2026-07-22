@@ -10,6 +10,19 @@ When analyzing live charts, compare price action to the **reference pattern imag
 
 ---
 
+# Kalshi 15-minute binary mode (active for KXBTC15M / KXETH15M)
+
+When the user message says you are deciding a **Kalshi 15m up/down** market, apply ICT structure with these corrections:
+
+1. **Horizon:** Bias only for the **current ~15-minute window** (up = long / YES, down = short / NO). Do not plan multi-day swing holds.
+2. **Timeframes:** H4 = directional context; H1 = intermediate structure; **M5 = entry trigger** (same as swing guide). Prefer trades with a clear M5 OB fib or fresh M5 SFP reclaim.
+3. **Fib gate:** Long only if **live spot** is in a **bullish M5 OB 0.25–0.50** fib band (or bullish M5 SFP reclaim back into the M5 OB). Short only for the bearish mirror. If price is only inside an H4 OB without an M5 fib/SFP trigger → `no_trade`.
+4. **Actions still use spot JSON:** `spot_buy` / `deriv_buy` = long → engine maps to Kalshi **YES**; `spot_sell` / `deriv_sell` = short → **NO**; `no_trade` → skip. Still return `order_block` (M5), `entry` near spot, and a sensible SL/TP for structure narration — the Kalshi engine ignores spot size and does not hold to those TPs.
+5. **Skip** when structure is mixed, mid-window chop with no M5 trigger, or you lack conviction for the next 15 minutes.
+6. **Rationale:** Lead with HTF bias → M5 OB/SFP/fib → why the next 15m favors up or down. Mention that this is a Kalshi binary mapping, not a spot swing hold.
+
+---
+
 # Dual-asset selection and relative strength
 
 - The agent evaluates **ETH-USD and BTC-USD** independently each cycle. Concurrent ETH and BTC trades are allowed when both assets have valid setups.

@@ -337,6 +337,16 @@ def get_stats() -> dict[str, Any]:
     }
 
 
+def get_sizing_basis(
+    spot_price: float | None = None,
+    spots: dict[str, float] | None = None,
+) -> tuple[float, float]:
+    """Compatibility shim for validate.py — returns (equity, cash) from Kalshi paper book."""
+    del spot_price, spots
+    stats = get_stats()
+    return float(stats["equity_usd"]), float(stats["cash_usd"])
+
+
 def format_stats_text() -> str:
     s = get_stats()
     lines = [

@@ -1,36 +1,22 @@
-"""Kalshi 15m decision cycle — settle due, propose YES/NO with edge gate, paper fill."""
+"""Kalshi 15m decision cycle — settle due, ICT bias → YES/NO, paper fill."""
 
 from __future__ import annotations
 
 import json
 import logging
-import re
 from datetime import datetime, timezone
 from typing import Any
-
-import anthropic
 
 import bot_config
 import config
 import kalshi_charts
 import kalshi_client
+import kalshi_ict
 import notify
 import paper
-import research
 from models import KalshiSuggestion
 
 logger = logging.getLogger(__name__)
-
-_JSON_RE = re.compile(r"\{[\s\S]*\}")
-
-
-def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _near_decision_time(now: datetime | None = None) -> bool:
@@ -58,7 +44,6 @@ def settle_due() -> list[dict[str, Any]]:
             logger.exception("Failed to fetch result for %s", ticker)
             continue
         if not result:
-            # Also try after close_time even if result empty (log and wait).
             continue
         closed = paper.settle_position(ticker, result)
         if closed:
@@ -74,92 +59,6 @@ def settle_due() -> list[dict[str, Any]]:
                 logger.exception("Settle notify failed for %s", ticker)
             settled.append(closed)
     return settled
-
-
-def _candle_summary(product_coinbase: str, limit: int = 12) -> str:
-    try:
-        bars = research.get_ohlc("M5", limit=limit, product_id=product_coinbase)
-    except Exception:
-        logger.exception("Failed to fetch candles for %s", product_coinbase)
-        return "(candles unavailable)"
-    lines = []
-    for b in bars[-limit:]:
-        lines.append(
-            f"{b['ts']} o={b['open']:.2f} h={b['high']:.2f} "
-            f"l={b['low']:.2f} c={b['close']:.2f}"
-        )
-    if not lines:
-        return "(no candles)"
-    last = bars[-1]
-    first = bars[-min(limit, len(bars))]
-    try:
-        move_pct = (float(last["close"]) - float(first["open"])) / float(first["open"]) * 100
-    except Exception:
-        move_pct = 0.0
-    header = f"Last {len(lines)} M5 bars; window move ~{move_pct:+.3f}%"
-    return header + "\n" + "\n".join(lines)
-
-
-def _ask_claude(
-    *,
-    series: str,
-    product_id: str,
-    market: dict[str, Any],
-    mid_cents: float,
-    candle_text: str,
-) -> dict[str, Any]:
-    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
-    title = market.get("title") or series
-    strike = market.get("floor_strike") or market.get("yes_sub_title") or ""
-    prompt = f"""You are trading Kalshi 15-minute BTC/ETH up/down binary markets.
-
-Market: {title}
-Ticker: {market.get('ticker')}
-Series: {series}
-Asset: {product_id}
-Strike / subtitle: {strike}
-Rules: {str(market.get('rules_primary') or '')[:400]}
-Kalshi YES mid: {mid_cents:.2f} cents (0–100).
-
-Recent Coinbase {product_id}-USD M5 candles:
-{candle_text}
-
-Decide whether YES (price up vs window open reference) or NO is underpriced vs a simple fair value.
-Return ONLY JSON:
-{{"side":"YES"|"NO"|"SKIP","fair_yes_cents":0-100,"rationale":"3-6 sentence detailed explanation"}}
-
-Rules:
-- fair_yes_cents is your estimated probability of YES in cents (50 = coin flip).
-- SKIP if edge is unclear or market is extreme (<5 or >95) without conviction.
-- Rationale must cover: (1) what recent M5 candles show, (2) where price sits vs strike/open reference if known, (3) whether Kalshi mid looks rich/cheap vs your fair, (4) why you trade or skip.
-- No markdown. Plain sentences only.
-"""
-    msg = client.messages.create(
-        model=config.ANTHROPIC_MODEL,
-        max_tokens=700,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = ""
-    for block in msg.content:
-        if getattr(block, "type", None) == "text":
-            text += block.text
-    match = _JSON_RE.search(text)
-    if not match:
-        return {"side": "SKIP", "fair_yes_cents": mid_cents, "rationale": "parse_failed"}
-    try:
-        data = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {"side": "SKIP", "fair_yes_cents": mid_cents, "rationale": "json_failed"}
-    side = str(data.get("side") or "SKIP").upper()
-    if side not in ("YES", "NO", "SKIP"):
-        side = "SKIP"
-    try:
-        fair = float(data.get("fair_yes_cents"))
-    except (TypeError, ValueError):
-        fair = mid_cents
-    fair = max(0.0, min(100.0, fair))
-    rationale = str(data.get("rationale") or "").strip() or "no rationale"
-    return {"side": side, "fair_yes_cents": fair, "rationale": rationale}
 
 
 def _contract_price_cents(side: str, yes_mid_cents: float) -> float:
@@ -179,7 +78,6 @@ def _bankroll_usd() -> float:
         bal = kalshi_client.get_balance()
         if bal.get("balance_dollars") is not None:
             return max(0.0, float(bal["balance_dollars"]))
-        # Kalshi often returns balance in cents.
         if bal.get("balance") is not None:
             raw = float(bal["balance"])
             return raw / 100.0 if raw > 1000 else raw
@@ -187,22 +85,18 @@ def _bankroll_usd() -> float:
             raw = float(bal["portfolio_value"])
             return raw / 100.0 if raw > 1000 else raw
     except Exception:
-        logger.exception("Live balance fetch failed — using KALSHI_BANKROLL_USD=%.2f", configured)
+        logger.exception(
+            "Live balance fetch failed — using KALSHI_BANKROLL_USD=%.2f", configured
+        )
     return configured
 
 
 def size_contracts(side: str, yes_mid_cents: float) -> tuple[int, float, float]:
-    """Return (contracts, entry_cents, budget_usd) scaled to bankroll.
-
-    Spends up to KALSHI_DEPLOY_PCT of bankroll on this fill, hard-capped by
-    KALSHI_MAX_CONTRACTS. Always at least 1 if budget covers one contract.
-    """
+    """Return (contracts, entry_cents, budget_usd) scaled to bankroll."""
     entry_cents = _contract_price_cents(side, yes_mid_cents)
     price = entry_cents / 100.0
     bankroll = _bankroll_usd()
     budget = max(0.0, bankroll * float(bot_config.KALSHI_DEPLOY_PCT))
-    # Leave headroom so BTC+ETH same window can't each take a full 5% twice blindly:
-    # still per-trade budget, but hard max contracts keeps it small on $77.
     if price <= 0:
         return 0, entry_cents, budget
     raw = int(budget // price)
@@ -228,6 +122,19 @@ def size_contracts(side: str, yes_mid_cents: float) -> tuple[int, float, float]:
             contracts * price,
         )
     return contracts, entry_cents, budget
+
+
+def _mid_too_extreme(side: str, mid: float) -> str | None:
+    """Skip lottery-ticket mids even when ICT has a bias."""
+    extreme = float(getattr(bot_config, "KALSHI_EXTREME_MID_CENTS", 5.0))
+    min_edge = float(bot_config.KALSHI_MIN_EDGE_CENTS)
+    if mid < extreme or mid > (100.0 - extreme):
+        return f"mid {mid:.1f}¢ too extreme (<{extreme} or >{100 - extreme})"
+    if side == "YES" and mid > (100.0 - min_edge):
+        return f"YES mid {mid:.1f}¢ too rich (need ≤{100 - min_edge:.0f})"
+    if side == "NO" and mid < min_edge:
+        return f"NO via mid {mid:.1f}¢ too rich (YES mid need ≥{min_edge:.0f})"
+    return None
 
 
 def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
@@ -261,54 +168,51 @@ def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
             expiry_ts=str(expiry) if expiry else None,
         )
 
-    candle_text = _candle_summary(coinbase)
-    llm = _ask_claude(
-        series=series,
-        product_id=product_id,
-        market=market,
-        mid_cents=mid,
-        candle_text=candle_text,
-    )
-    fair = float(llm["fair_yes_cents"])
-    side = str(llm["side"]).upper()
-    rationale = str(llm["rationale"])
-    min_edge = float(bot_config.KALSHI_MIN_EDGE_CENTS)
-
-    if side == "SKIP":
+    try:
+        ict, snapshot = kalshi_ict.propose_ict_bias(coinbase)
+    except Exception as exc:
+        logger.exception("ICT bias failed for %s", coinbase)
         return KalshiSuggestion.skip(
             series=series,
             market_ticker=ticker,
             product_id=product_id,
-            rationale=f"skipped: {rationale}",
+            rationale=f"ICT analysis failed: {exc}",
             mid_cents=mid,
-            fair_yes_cents=fair,
             expiry_ts=str(expiry) if expiry else None,
         )
 
-    if side == "YES":
-        edge = fair - mid
-        if edge < min_edge:
-            return KalshiSuggestion.skip(
-                series=series,
-                market_ticker=ticker,
-                product_id=product_id,
-                rationale=f"skipped: no edge (YES fair {fair:.1f} vs mid {mid:.1f}, need +{min_edge})",
-                mid_cents=mid,
-                fair_yes_cents=fair,
-                expiry_ts=str(expiry) if expiry else None,
-            )
-    else:
-        edge = mid - fair
-        if edge < min_edge:
-            return KalshiSuggestion.skip(
-                series=series,
-                market_ticker=ticker,
-                product_id=product_id,
-                rationale=f"skipped: no edge (NO vs mid {mid:.1f} fair {fair:.1f}, need +{min_edge})",
-                mid_cents=mid,
-                fair_yes_cents=fair,
-                expiry_ts=str(expiry) if expiry else None,
-            )
+    bias = kalshi_ict.ict_bias_label(ict.action)
+    side = kalshi_ict.ict_action_to_side(ict.action)
+    rationale = (ict.rationale or "").strip() or "no ICT rationale"
+    ctx = snapshot.get("market_context")
+    spot = getattr(ctx, "spot", None)
+    if spot is not None:
+        rationale = f"ICT {bias} @ spot {float(spot):,.2f}. {rationale}"
+
+    if side is None:
+        return KalshiSuggestion.skip(
+            series=series,
+            market_ticker=ticker,
+            product_id=product_id,
+            rationale=f"skipped (ICT no_trade): {rationale}",
+            mid_cents=mid,
+            expiry_ts=str(expiry) if expiry else None,
+            ict_action=ict.action,
+            ict_bias=bias,
+        )
+
+    extreme_reason = _mid_too_extreme(side, float(mid))
+    if extreme_reason:
+        return KalshiSuggestion.skip(
+            series=series,
+            market_ticker=ticker,
+            product_id=product_id,
+            rationale=f"skipped: {extreme_reason}. ICT was {bias}. {rationale}",
+            mid_cents=mid,
+            expiry_ts=str(expiry) if expiry else None,
+            ict_action=ict.action,
+            ict_bias=bias,
+        )
 
     contracts, entry_cents, budget = size_contracts(side, mid)
     if contracts < 1:
@@ -321,11 +225,20 @@ def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
                 f"(budget ${budget:.2f}). {rationale}"
             ),
             mid_cents=mid,
-            fair_yes_cents=fair,
             expiry_ts=str(expiry) if expiry else None,
+            ict_action=ict.action,
+            ict_bias=bias,
         )
 
-    suggestion = KalshiSuggestion(
+    min_edge = float(bot_config.KALSHI_MIN_EDGE_CENTS)
+    if side == "YES":
+        fair = float(mid) + min_edge
+        edge = min_edge
+    else:
+        fair = float(mid) - min_edge
+        edge = min_edge
+
+    return KalshiSuggestion(
         series=series,
         market_ticker=ticker,
         side=side,
@@ -337,8 +250,9 @@ def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
         fair_yes_cents=fair,
         mid_cents=mid,
         edge_cents=float(edge),
+        ict_action=ict.action,
+        ict_bias=bias,
     )
-    return suggestion
 
 
 def _strike_from_market(market: dict[str, Any]) -> float | None:
@@ -357,6 +271,13 @@ def _notify_decision(
     market: dict[str, Any] | None = None,
     opened: bool = False,
 ) -> None:
+    if (
+        bot_config.BROADCAST_ONLY_TRADES
+        and not suggestion.is_trade()
+        and not opened
+    ):
+        logger.info("Skip broadcast (BROADCAST_ONLY_TRADES): %s", suggestion.rationale[:120])
+        return
     strike = _strike_from_market(market or {})
     chart_path = None
     try:
@@ -372,7 +293,7 @@ def _notify_decision(
 
 
 def run_decision_cycle() -> list[KalshiSuggestion]:
-    """For each configured series, decide and notify (trade or skip)."""
+    """For each configured series, ICT-decide and notify (trade or skip)."""
     results: list[KalshiSuggestion] = []
     for series in config.KALSHI_SERIES:
         try:
@@ -403,7 +324,6 @@ def run_decision_cycle() -> list[KalshiSuggestion]:
         suggestion = _decide_for_market(series, market)
         results.append(suggestion)
         if suggestion.is_trade():
-            # Live stub is no-op in paper mode; paper fill is source of truth.
             kalshi_client.place_order(
                 suggestion.market_ticker,
                 suggestion.side,
@@ -414,11 +334,12 @@ def run_decision_cycle() -> list[KalshiSuggestion]:
             if opened:
                 _notify_decision(suggestion, market=market, opened=True)
                 logger.info(
-                    "Paper opened %s %s x%s @ %.1f¢",
+                    "Paper opened %s %s x%s @ %.1f¢ (ICT %s)",
                     suggestion.product_id,
                     suggestion.side,
                     suggestion.contracts,
                     suggestion.entry_cents or 0,
+                    suggestion.ict_bias,
                 )
             else:
                 logger.warning("Paper open failed for %s", suggestion.market_ticker)
@@ -433,6 +354,8 @@ def run_decision_cycle() -> list[KalshiSuggestion]:
                     mid_cents=suggestion.mid_cents,
                     fair_yes_cents=suggestion.fair_yes_cents,
                     expiry_ts=suggestion.expiry_ts,
+                    ict_action=suggestion.ict_action,
+                    ict_bias=suggestion.ict_bias,
                 )
                 results[-1] = suggestion
                 _notify_decision(suggestion, market=market, opened=False)
