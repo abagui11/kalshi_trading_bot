@@ -162,6 +162,74 @@ Rules:
     return {"side": side, "fair_yes_cents": fair, "rationale": rationale}
 
 
+def _contract_price_cents(side: str, yes_mid_cents: float) -> float:
+    """Approximate fill price in cents for YES or NO given YES mid."""
+    mid = float(yes_mid_cents)
+    if side.upper() == "YES":
+        return max(1.0, min(99.0, mid))
+    return max(1.0, min(99.0, 100.0 - mid))
+
+
+def _bankroll_usd() -> float:
+    """Bankroll for sizing: live Kalshi balance when enabled, else configured $77."""
+    configured = float(bot_config.KALSHI_BANKROLL_USD)
+    if config.KALSHI_PAPER_ONLY or not bot_config.KALSHI_USE_LIVE_BALANCE:
+        return configured
+    try:
+        bal = kalshi_client.get_balance()
+        if bal.get("balance_dollars") is not None:
+            return max(0.0, float(bal["balance_dollars"]))
+        # Kalshi often returns balance in cents.
+        if bal.get("balance") is not None:
+            raw = float(bal["balance"])
+            return raw / 100.0 if raw > 1000 else raw
+        if bal.get("portfolio_value") is not None:
+            raw = float(bal["portfolio_value"])
+            return raw / 100.0 if raw > 1000 else raw
+    except Exception:
+        logger.exception("Live balance fetch failed — using KALSHI_BANKROLL_USD=%.2f", configured)
+    return configured
+
+
+def size_contracts(side: str, yes_mid_cents: float) -> tuple[int, float, float]:
+    """Return (contracts, entry_cents, budget_usd) scaled to bankroll.
+
+    Spends up to KALSHI_DEPLOY_PCT of bankroll on this fill, hard-capped by
+    KALSHI_MAX_CONTRACTS. Always at least 1 if budget covers one contract.
+    """
+    entry_cents = _contract_price_cents(side, yes_mid_cents)
+    price = entry_cents / 100.0
+    bankroll = _bankroll_usd()
+    budget = max(0.0, bankroll * float(bot_config.KALSHI_DEPLOY_PCT))
+    # Leave headroom so BTC+ETH same window can't each take a full 5% twice blindly:
+    # still per-trade budget, but hard max contracts keeps it small on $77.
+    if price <= 0:
+        return 0, entry_cents, budget
+    raw = int(budget // price)
+    cap = max(1, int(bot_config.KALSHI_MAX_CONTRACTS))
+    contracts = max(0, min(cap, raw))
+    if contracts < 1 and budget >= price:
+        contracts = 1
+    if contracts < 1:
+        logger.info(
+            "Size 0: bankroll=$%.2f budget=$%.2f price=$%.2f (need >= 1 contract)",
+            bankroll,
+            budget,
+            price,
+        )
+    else:
+        logger.info(
+            "Size %s x%s @ %.1f¢ (bankroll=$%.2f budget=$%.2f cost~$%.2f)",
+            side,
+            contracts,
+            entry_cents,
+            bankroll,
+            budget,
+            contracts * price,
+        )
+    return contracts, entry_cents, budget
+
+
 def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
     product_id = bot_config.series_product(series)
     coinbase = bot_config.PRODUCT_TO_COINBASE.get(product_id, f"{product_id}-USD")
@@ -242,13 +310,27 @@ def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
                 expiry_ts=str(expiry) if expiry else None,
             )
 
-    contracts = max(1, int(bot_config.KALSHI_MAX_CONTRACTS))
+    contracts, entry_cents, budget = size_contracts(side, mid)
+    if contracts < 1:
+        return KalshiSuggestion.skip(
+            series=series,
+            market_ticker=ticker,
+            product_id=product_id,
+            rationale=(
+                f"skipped: bankroll too small for 1 contract at {entry_cents:.1f}¢ "
+                f"(budget ${budget:.2f}). {rationale}"
+            ),
+            mid_cents=mid,
+            fair_yes_cents=fair,
+            expiry_ts=str(expiry) if expiry else None,
+        )
+
     suggestion = KalshiSuggestion(
         series=series,
         market_ticker=ticker,
         side=side,
         contracts=contracts,
-        entry_cents=float(mid),
+        entry_cents=float(entry_cents),
         expiry_ts=str(expiry) if expiry else None,
         rationale=rationale,
         product_id=product_id,

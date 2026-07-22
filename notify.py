@@ -69,6 +69,8 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
             f"Kalshi YES mid: {mid}",
             f"Model fair YES: {fair}",
             f"Edge: {edge} (min {config.KALSHI_MIN_EDGE_CENTS}¢)",
+            f"Sizing: bankroll ${config.KALSHI_BANKROLL_USD:.0f} · "
+            f"deploy {config.KALSHI_DEPLOY_PCT*100:.0f}%/trade · max {config.KALSHI_MAX_CONTRACTS} ct",
             f"Expiry / close: {expiry}",
             f"Paper equity: ${stats['equity_usd']:.2f} | open {stats['open_count']} | "
             f"{stats['wins']}W/{stats['losses']}L",

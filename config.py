@@ -103,3 +103,8 @@ KALSHI_PAPER_ONLY: bool = _optional_bool("KALSHI_PAPER_ONLY", default=True)
 KALSHI_MAX_CONTRACTS: int = int(os.getenv("KALSHI_MAX_CONTRACTS", "5") or "5")
 KALSHI_MIN_EDGE_CENTS: float = float(os.getenv("KALSHI_MIN_EDGE_CENTS", "3") or "3")
 KALSHI_CYCLE_OFFSET_SEC: int = int(os.getenv("KALSHI_CYCLE_OFFSET_SEC", "30") or "30")
+# Sizing vs ~$77 bankroll: each trade spends up to DEPLOY_PCT of bankroll (capped by MAX_CONTRACTS).
+KALSHI_BANKROLL_USD: float = float(os.getenv("KALSHI_BANKROLL_USD", "77") or "77")
+KALSHI_DEPLOY_PCT: float = float(os.getenv("KALSHI_DEPLOY_PCT", "0.05") or "0.05")
+# When live, prefer Kalshi account balance for bankroll; fall back to KALSHI_BANKROLL_USD.
+KALSHI_USE_LIVE_BALANCE: bool = _optional_bool("KALSHI_USE_LIVE_BALANCE", default=True)

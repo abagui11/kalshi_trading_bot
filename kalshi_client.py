@@ -236,8 +236,10 @@ def place_order(
         "type": "limit",
     }
     if yes_price_cents is not None:
-        # API expects integer cents for yes price on limit orders.
-        body["yes_price"] = int(yes_price_cents)
+        if side_u == "YES":
+            body["yes_price"] = int(yes_price_cents)
+        else:
+            body["no_price"] = int(yes_price_cents)
     return request("POST", "/portfolio/orders", json_body=body, auth=True)
 
 
