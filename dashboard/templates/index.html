@@ -219,6 +219,28 @@
       {% endif %}
     </section>
 
+    <section class="card" id="ops-card">
+      <h2>Watchdog controls</h2>
+      <p class="sub" id="watchdog-status">
+        Scan:
+        <strong>{% if status.watchdog_enabled %}on{% else %}off{% endif %}</strong>
+        · Paper execute:
+        <strong id="wd-execute-label">{% if status.watchdog_execute_enabled %}on{% else %}off{% endif %}</strong>
+        · Shorts allowed:
+        <strong>{% if status.watchdog_allow_shorts %}yes{% else %}no{% endif %}</strong>
+      </p>
+      <p class="sub" style="margin-bottom:8px">
+        Ops toggle requires <code>MACRO_WEBHOOK_SECRET</code> as Bearer token
+        (same as macro ingest). Default execute is off after the paper audit.
+      </p>
+      <div class="ops-row">
+        <input type="password" id="ops-secret" placeholder="Ops Bearer secret" autocomplete="off" />
+        <button type="button" id="wd-execute-on" class="btn">Execute on</button>
+        <button type="button" id="wd-execute-off" class="btn">Execute off</button>
+      </div>
+      <p class="sub" id="wd-ops-msg" style="margin-top:8px"></p>
+    </section>
+
     <section class="card" id="macro-card">
       <h2>Macro news monitor</h2>
       {% if macro.enabled %}
@@ -492,6 +514,44 @@
       });
     }
     initChartLightbox();
+
+    async function setWatchdogExecute(enabled) {
+      var msg = document.getElementById('wd-ops-msg');
+      var secretEl = document.getElementById('ops-secret');
+      var secret = secretEl ? secretEl.value.trim() : '';
+      if (!secret) {
+        if (msg) msg.textContent = 'Enter the ops Bearer secret first.';
+        return;
+      }
+      try {
+        var res = await fetch('/api/ops/watchdog-execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + secret,
+          },
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        var data = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+          if (msg) msg.textContent = data.detail || ('HTTP ' + res.status);
+          return;
+        }
+        var label = document.getElementById('wd-execute-label');
+        if (label) label.textContent = data.execute_enabled ? 'on' : 'off';
+        if (msg) {
+          msg.textContent = data.execute_enabled
+            ? 'Watchdog paper execution ON (shorts still gated by WATCHDOG_ALLOW_SHORTS).'
+            : 'Watchdog paper execution OFF — scan/shadow only.';
+        }
+      } catch (e) {
+        if (msg) msg.textContent = 'Request failed.';
+      }
+    }
+    var onBtn = document.getElementById('wd-execute-on');
+    var offBtn = document.getElementById('wd-execute-off');
+    if (onBtn) onBtn.addEventListener('click', function () { setWatchdogExecute(true); });
+    if (offBtn) offBtn.addEventListener('click', function () { setWatchdogExecute(false); });
 
     function money(n) {
       return '$' + Number(n || 0).toLocaleString(undefined, {

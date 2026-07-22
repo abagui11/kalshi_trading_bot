@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import datetime, timezone
+from typing import Any
 
 import config
 from models import Suggestion
@@ -42,6 +43,14 @@ def _ensure_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE suggestions ADD COLUMN product_id TEXT NOT NULL DEFAULT 'ETH-USD'"
         )
+    if "executed" not in cols:
+        conn.execute(
+            "ALTER TABLE suggestions ADD COLUMN executed INTEGER NOT NULL DEFAULT 1"
+        )
+    if "trigger_name" not in cols:
+        conn.execute("ALTER TABLE suggestions ADD COLUMN trigger_name TEXT")
+    if "macro_json" not in cols:
+        conn.execute("ALTER TABLE suggestions ADD COLUMN macro_json TEXT")
 
 
 def _connect() -> sqlite3.Connection:
@@ -64,11 +73,20 @@ def append(
     chart_path: str,
     ts: str | None = None,
     setup_tags: str | None = None,
+    *,
+    executed: bool = True,
+    trigger_name: str | None = None,
+    macro_json: str | dict[str, Any] | None = None,
 ) -> int:
     """Append one suggestion row. Returns the new row id."""
     init_db()
     row_ts = ts or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     product_id = getattr(suggestion, "product_id", None) or "ETH-USD"
+    trigger = trigger_name or getattr(suggestion, "trigger_name", None)
+    if isinstance(macro_json, dict):
+        macro_payload = json.dumps(macro_json)
+    else:
+        macro_payload = macro_json
 
     with _connect() as conn:
         cursor = conn.execute(
@@ -76,8 +94,8 @@ def append(
             INSERT INTO suggestions (
                 ts, cycle_id, action, size, entry, stop_loss,
                 take_profits, risk_reward, price_at_suggestion, rationale, chart_path,
-                setup_tags, product_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                setup_tags, product_id, executed, trigger_name, macro_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row_ts,
@@ -93,6 +111,9 @@ def append(
                 chart_path,
                 setup_tags,
                 product_id,
+                1 if executed else 0,
+                trigger,
+                macro_payload,
             ),
         )
         conn.commit()
@@ -119,9 +140,7 @@ def get_latest_trade_suggestion() -> dict | None:
         ).fetchone()
     if row is None:
         return None
-    record = dict(row)
-    record["take_profits"] = json.loads(record["take_profits"] or "[]")
-    return record
+    return _row_to_record(row)
 
 
 def get_suggestion_by_cycle_id(cycle_id: str) -> dict | None:
@@ -133,9 +152,7 @@ def get_suggestion_by_cycle_id(cycle_id: str) -> dict | None:
         ).fetchone()
     if row is None:
         return None
-    record = dict(row)
-    record["take_profits"] = json.loads(record["take_profits"] or "[]")
-    return record
+    return _row_to_record(row)
 
 
 def require_cycle_recorded(cycle_id: str) -> dict:
@@ -159,12 +176,7 @@ def get_latest(n: int = 10) -> list[dict]:
             (n,),
         ).fetchall()
 
-    results = []
-    for row in rows:
-        record = dict(row)
-        record["take_profits"] = json.loads(record["take_profits"] or "[]")
-        results.append(record)
-    return results
+    return [_row_to_record(row) for row in rows]
 
 
 def search_rationale(query: str, limit: int = 5) -> list[dict]:
@@ -183,12 +195,7 @@ def search_rationale(query: str, limit: int = 5) -> list[dict]:
             """,
             (f"%{query}%", limit),
         ).fetchall()
-    results = []
-    for row in rows:
-        record = dict(row)
-        record["take_profits"] = json.loads(record["take_profits"] or "[]")
-        results.append(record)
-    return results
+    return [_row_to_record(row) for row in rows]
 
 
 def format_history_summary(rows: list[dict], *, max_rationale_chars: int = 220) -> str:
@@ -208,6 +215,22 @@ def format_history_summary(rows: list[dict], *, max_rationale_chars: int = 220) 
             f"- {ts} | cycle {cycle_id} | {action} | charts: {chart}\n  rationale: {rationale}"
         )
     return "\n".join(lines)
+
+
+def _row_to_record(row: sqlite3.Row) -> dict:
+    record = dict(row)
+    record["take_profits"] = json.loads(record["take_profits"] or "[]")
+    if "executed" in record and record["executed"] is not None:
+        record["executed"] = bool(record["executed"])
+    raw_macro = record.get("macro_json")
+    if isinstance(raw_macro, str) and raw_macro.strip():
+        try:
+            record["macro"] = json.loads(raw_macro)
+        except json.JSONDecodeError:
+            record["macro"] = None
+    else:
+        record["macro"] = None
+    return record
 
 
 if __name__ == "__main__":

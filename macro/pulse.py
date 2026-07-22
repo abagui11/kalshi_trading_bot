@@ -1,4 +1,4 @@
-"""Position-aware macro pulse advisory (no execution)."""
+"""Position-aware macro pulse — advisory plus mechanical tighten_sl on house book."""
 
 from __future__ import annotations
 
@@ -100,6 +100,21 @@ def run_macro_pulse(event: dict[str, Any]) -> dict[str, Any] | None:
         advisory=advisory,
         text_summary=text_summary,
     )
+
+    if rec == "tighten_sl":
+        try:
+            spots = research.get_spot_prices()
+            applied = paper.tighten_stops_from_pulse(
+                recommendation=rec,
+                spots=spots,
+                event_id=int(event["id"]),
+            )
+            if applied:
+                logger.info(
+                    "Macro pulse applied tighten_sl to %d position(s)", len(applied)
+                )
+        except Exception:
+            logger.exception("Failed to apply macro pulse tighten_sl")
 
     try:
         notify.send_macro_pulse_alert(event, advisory, text_summary)

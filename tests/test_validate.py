@@ -110,13 +110,12 @@ class ValidateTradeRiskTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be above entry"):
             validate.validate_trade_risk(s, portfolio_value=1000.0)
 
-    def test_accepts_tight_stop_with_fixed_sizing(self) -> None:
-        # Guide-minimum 0.25% stop is fine now: sizing is deployment-based, not risk-based,
-        # so a tight stop no longer needs unaffordable notional to hit a risk target.
+    def test_accepts_min_floor_stop_with_fixed_sizing(self) -> None:
+        # Volatility floor is 0.80%: sizing stays deployment-based, not risk-based.
         s = self._short(
             entry=1600.0,
-            stop_loss=1604.0,
-            take_profits=[1580.0],
+            stop_loss=1613.0,  # > 0.80%
+            take_profits=[1560.0],
         )
         validate.validate_trade_risk(s, portfolio_value=1000.0)
         self.assertGreater(s.size, 0)

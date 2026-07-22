@@ -74,6 +74,14 @@ PAPER_EPOCH_LABEL = "5k_usd"
 WATCHDOG_ENABLED = True
 WATCHDOG_INTERVAL_SEC = 60  # 1 minute (valid range: 60–300)
 WATCHDOG_COOLDOWN_SEC = 30 * 60  # 30 min — suppress repeat trigger on same M5 OB
+# Scan/log always when WATCHDOG_ENABLED; paper fills + subscriber offers only when execute is on.
+# Runtime override via user_books meta key WATCHDOG_EXECUTE_META_KEY (dashboard / Telegram).
+WATCHDOG_EXECUTE_ENABLED = False
+WATCHDOG_EXECUTE_META_KEY = "watchdog_execute_enabled"
+# When execute is on, still block short fires unless this is True (inverted M5 short module).
+WATCHDOG_ALLOW_SHORTS = False
+# Scale-in only when unrealized P&L >= this multiple of 1R (entry→stop distance).
+SCALE_IN_MIN_R = 0.5
 
 # Macro headline context (RSS + webhook advisory layer).
 MACRO_CONTEXT_ENABLED = True
@@ -117,3 +125,24 @@ def product_label(product_id: str) -> str:
     if "/" in product_id:
         return product_id
     return product_id
+
+
+def watchdog_execute_enabled() -> bool:
+    """Effective watchdog paper-execution flag (config default + runtime meta override)."""
+    try:
+        import user_books
+
+        raw = user_books.get_meta(WATCHDOG_EXECUTE_META_KEY)
+    except Exception:
+        raw = None
+    if raw is None or str(raw).strip() == "":
+        return bool(WATCHDOG_EXECUTE_ENABLED)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def set_watchdog_execute_enabled(enabled: bool) -> bool:
+    """Persist runtime override for watchdog paper execution. Returns new value."""
+    import user_books
+
+    user_books.set_meta(WATCHDOG_EXECUTE_META_KEY, "1" if enabled else "0")
+    return enabled

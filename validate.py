@@ -10,8 +10,8 @@ LONG_ACTIONS = frozenset({"spot_buy", "deriv_buy"})
 SHORT_ACTIONS = frozenset({"spot_sell", "deriv_sell"})
 TRADE_ACTIONS = LONG_ACTIONS | SHORT_ACTIONS
 
-# Trading Guide: SL placed ~0.25% from HTF swing (blocks $1 micro-stops on ~$1600 ETH).
-MIN_STOP_DISTANCE_PCT = 0.0025
+# Volatility floor: stop must clear noise-width (audit: WD losers clustered at ~0.34%).
+MIN_STOP_DISTANCE_PCT = 0.008
 MIN_RISK_REWARD = 1.0
 
 

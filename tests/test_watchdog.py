@@ -356,3 +356,45 @@ class WatchdogNotifyTests(unittest.TestCase):
         text = bot.send_message.call_args.kwargs["text"]
         self.assertIn("Spot Buy", text)
         self.assertNotIn("Why this trade", text)
+
+
+class WatchdogStopFloorTests(unittest.TestCase):
+    def test_min_stop_distance_widens_tight_swing(self) -> None:
+        import validate
+        from watchdog import _ensure_min_stop_distance
+
+        entry = 2000.0
+        tight = 1995.0  # 0.25% — below 0.8% floor
+        widened = _ensure_min_stop_distance(entry, tight, "bullish")
+        self.assertLessEqual(
+            widened, entry * (1 - validate.MIN_STOP_DISTANCE_PCT)
+        )
+        self.assertAlmostEqual(
+            (entry - widened) / entry,
+            validate.MIN_STOP_DISTANCE_PCT,
+            places=4,
+        )
+
+
+class WatchdogScaleInGateTests(unittest.TestCase):
+    def test_underwater_scale_in_blocked(self) -> None:
+        from patterns.order_block import fib_level, order_block_ref
+        from watchdog import evaluate_scale_in
+
+        ob = _bullish_ob()
+        # Spot near 0.718 — outside the 0.25–0.50 entry band used by _bullish_ctx assert.
+        spot = fib_level("bullish", ob.low, ob.high, 0.718)
+        ctx = _bullish_ctx(fib_level("bullish", ob.low, ob.high, 0.25))
+        ctx.order_blocks = [ob]
+        ctx.spot = spot
+        positions = [
+            {
+                "order_block_ref": order_block_ref(ob),
+                "entry_tranches": ["0.25"],
+                "side": "long",
+                "avg_entry": spot + 20,
+                "stop_loss": spot - 10,
+            }
+        ]
+        self.assertIsNone(evaluate_scale_in(ctx, positions))
+        self.assertIn("scale_in_blocked_underwater", ctx.setup_tags)

@@ -191,11 +191,29 @@ def _fresh_m5_sfp(ctx: MarketContext, m5_bars: list[dict]) -> SFPEvent | None:
     return None
 
 
+def _position_unrealized_r(pos: dict, spot: float) -> float | None:
+    """Signed R multiples vs entry→stop distance (positive = in profit)."""
+    try:
+        entry = float(pos["avg_entry"])
+        stop = float(pos["stop_loss"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return None
+    side = str(pos.get("side") or "")
+    if side == "long":
+        return (float(spot) - entry) / risk
+    if side == "short":
+        return (entry - float(spot)) / risk
+    return None
+
+
 def evaluate_scale_in(
     ctx: MarketContext,
     positions: list[dict],
 ) -> WatchdogTrigger | None:
-    """0.718 fib scale-in: adds another TRADE_DEPLOY_PCT to an existing OB position."""
+    """0.718 fib scale-in when an existing OB position is at least SCALE_IN_MIN_R in profit."""
     for pos in positions:
         ref = str(pos.get("order_block_ref") or "")
         if not ref:
@@ -212,6 +230,17 @@ def evaluate_scale_in(
         ):
             continue
         if not near_fib_level(ctx.spot, ob.direction, ob.low, ob.high, bot_config.ADD_FIB_LEVEL):
+            continue
+        unrealized_r = _position_unrealized_r(pos, ctx.spot)
+        if unrealized_r is None or unrealized_r < bot_config.SCALE_IN_MIN_R:
+            logger.info(
+                "Watchdog: scale-in blocked underwater (R=%.2f, need >= %.2f) ref=%s",
+                unrealized_r if unrealized_r is not None else float("nan"),
+                bot_config.SCALE_IN_MIN_R,
+                ref,
+            )
+            if "scale_in_blocked_underwater" not in ctx.setup_tags:
+                ctx.setup_tags.append("scale_in_blocked_underwater")
             continue
         add_level = fib_level(ob.direction, ob.low, ob.high, bot_config.ADD_FIB_LEVEL)
         return WatchdogTrigger(
@@ -372,6 +401,24 @@ def _swing_levels(h4_bars: list[dict]) -> list[Pivot]:
     return find_pivots(df)
 
 
+def _ensure_min_stop_distance(
+    entry: float,
+    stop: float,
+    direction: Direction,
+) -> float:
+    """Widen stop to validate.MIN_STOP_DISTANCE_PCT when structural stop is too tight."""
+    floor = entry * validate.MIN_STOP_DISTANCE_PCT
+    if direction == "bullish":
+        max_stop = entry - floor
+        if stop > max_stop:
+            return round(max_stop, 2)
+        return stop
+    min_stop = entry + floor
+    if stop < min_stop:
+        return round(min_stop, 2)
+    return stop
+
+
 def _stop_and_targets(
     *,
     entry: float,
@@ -386,6 +433,7 @@ def _stop_and_targets(
         else:
             tp = round(entry * (1 - SFP_TP_PCT), 2)
             stop = round(entry * (1 + max(SFP_TP_PCT, SL_BUFFER_PCT)), 2)
+        stop = _ensure_min_stop_distance(entry, stop, direction)
         return stop, [tp]
 
     pivots = _swing_levels(h4_bars)
@@ -396,6 +444,7 @@ def _stop_and_targets(
             stop = round(swing.price * (1 - SL_BUFFER_PCT), 2)
         else:
             stop = round(entry * (1 - SL_BUFFER_PCT), 2)
+        stop = _ensure_min_stop_distance(entry, stop, direction)
         highs = sorted(
             [p.price for p in pivots if p.kind == "high" and p.price > entry]
         )
@@ -420,6 +469,7 @@ def _stop_and_targets(
         stop = round(swing.price * (1 + SL_BUFFER_PCT), 2)
     else:
         stop = round(entry * (1 + SL_BUFFER_PCT), 2)
+    stop = _ensure_min_stop_distance(entry, stop, direction)
     lows = sorted(
         [p.price for p in pivots if p.kind == "low" and p.price < entry],
         reverse=True,
@@ -590,7 +640,9 @@ def build_suggestion(
         entry = round(ctx.spot, 2)
 
     if trigger.stop_override is not None:
-        stop_loss = trigger.stop_override
+        stop_loss = _ensure_min_stop_distance(
+            entry, trigger.stop_override, trigger.direction
+        )
         _, take_profits = _stop_and_targets(
             entry=entry,
             direction=trigger.direction,
@@ -623,12 +675,14 @@ def build_suggestion(
         "deploy_pct": trigger.deploy_pct,
         "entry_tranche": trigger.entry_tranche,
         "order_block_ref": order_block_ref(ob),
+        "trigger_name": trigger.name,
     }
     suggestion = analyze.validate_suggestion(payload, market_context=ctx)
     suggestion.product_id = product_id
     suggestion.deploy_pct = trigger.deploy_pct
     suggestion.entry_tranche = trigger.entry_tranche
     suggestion.order_block_ref = order_block_ref(ob)
+    suggestion.trigger_name = trigger.name
     return suggestion
 
 
@@ -695,6 +749,8 @@ def run_watchdog() -> list[Suggestion] | None:
     if not bot_config.WATCHDOG_ENABLED:
         return None
 
+    from macro.context import decision_macro_snapshot
+
     spots = research.get_spot_prices()
     try:
         user_books.expire_pending_decisions()
@@ -704,6 +760,8 @@ def run_watchdog() -> list[Suggestion] | None:
         logger.exception("Watchdog user-book maintenance failed")
 
     posture = active_posture()
+    macro_snap = decision_macro_snapshot(posture)
+    execute = bot_config.watchdog_execute_enabled()
     rs_bias = "neutral"
     if bot_config.RELATIVE_STRENGTH_ENABLED:
         try:
@@ -735,6 +793,16 @@ def run_watchdog() -> list[Suggestion] | None:
 
         for trigger in triggers:
             side = "long" if trigger.direction == "bullish" else "short"
+            skip_tags: list[str] = []
+            will_execute = execute
+            if trigger.direction == "bearish" and not bot_config.WATCHDOG_ALLOW_SHORTS:
+                logger.info(
+                    "Watchdog: shorts disabled — shadowing %s %s",
+                    product_id,
+                    trigger.name,
+                )
+                skip_tags.append("watchdog_shorts_disabled")
+                will_execute = False
             if (
                 bot_config.RELATIVE_STRENGTH_ENABLED
                 and not relative_strength.soft_gate_allows(
@@ -747,13 +815,13 @@ def run_watchdog() -> list[Suggestion] | None:
                     product_id,
                     side,
                 )
-                ctx.setup_tags.append("relative_strength_gate")
+                skip_tags.append("relative_strength_gate")
                 continue
             if posture.get("gate_long") and trigger.direction == "bullish":
-                ctx.setup_tags.append("macro_gate_long")
+                skip_tags.append("macro_gate_long")
                 continue
             if posture.get("gate_short") and trigger.direction == "bearish":
-                ctx.setup_tags.append("macro_gate_short")
+                skip_tags.append("macro_gate_short")
                 continue
 
             key = _trigger_key(product_id, trigger)
@@ -777,7 +845,10 @@ def run_watchdog() -> list[Suggestion] | None:
             cycle_id = (
                 f"{_cycle_id()}_{bot_config.product_label(product_id).upper()}"
             )
-            setup_tags = ",".join(ctx.setup_tags) if ctx.setup_tags else None
+            fire_tags = list(ctx.setup_tags) + skip_tags
+            if not will_execute:
+                fire_tags.append("watchdog_shadow")
+            setup_tags = ",".join(fire_tags) if fire_tags else None
             output_paths: list[str] = []
             try:
                 source_ts = None
@@ -802,50 +873,57 @@ def run_watchdog() -> list[Suggestion] | None:
                 live_spot,
                 chart_path=",".join(output_paths) if output_paths else "watchdog",
                 setup_tags=setup_tags,
+                executed=will_execute,
+                trigger_name=trigger.name,
+                macro_json=macro_snap,
             )
-            paper.update(
-                suggestion,
-                spots.get("ETH-USD", live_spot),
-                cycle_id=cycle_id,
-                spots=spots,
-            )
-            offer_id = None
-            card_summary = None
-            house_pos_id = user_books.find_house_position_id_for_cycle(cycle_id)
-            try:
-                card_summary = display_summary.generate_display_summary(suggestion)
-            except Exception:
-                logger.exception("Display summary generation failed for %s", cycle_id)
-                card_summary = None
-            offer = user_books.create_trade_offer(
-                cycle_id=cycle_id,
-                suggestion=suggestion,
-                chart_paths=output_paths,
-                house_position_id=house_pos_id,
-                display_summary=card_summary,
-            )
-            if offer:
-                offer_id = offer["offer_id"]
-            pnl_footer = paper.format_pnl_footer(spots=spots)
 
-            try:
-                if output_paths:
-                    notify.broadcast(
-                        suggestion,
-                        output_paths,
-                        pnl_footer=pnl_footer,
-                        offer_id=offer_id,
-                        display_summary_text=card_summary,
+            if will_execute:
+                paper.update(
+                    suggestion,
+                    spots.get("ETH-USD", live_spot),
+                    cycle_id=cycle_id,
+                    spots=spots,
+                )
+                offer_id = None
+                card_summary = None
+                house_pos_id = user_books.find_house_position_id_for_cycle(cycle_id)
+                try:
+                    card_summary = display_summary.generate_display_summary(suggestion)
+                except Exception:
+                    logger.exception(
+                        "Display summary generation failed for %s", cycle_id
                     )
-                else:
-                    notify.broadcast_text(
-                        suggestion,
-                        pnl_footer=pnl_footer,
-                        offer_id=offer_id,
-                        display_summary_text=card_summary,
-                    )
-            except Exception:
-                logger.exception("Watchdog broadcast failed for %s", cycle_id)
+                    card_summary = None
+                offer = user_books.create_trade_offer(
+                    cycle_id=cycle_id,
+                    suggestion=suggestion,
+                    chart_paths=output_paths,
+                    house_position_id=house_pos_id,
+                    display_summary=card_summary,
+                )
+                if offer:
+                    offer_id = offer["offer_id"]
+                pnl_footer = paper.format_pnl_footer(spots=spots)
+
+                try:
+                    if output_paths:
+                        notify.broadcast(
+                            suggestion,
+                            output_paths,
+                            pnl_footer=pnl_footer,
+                            offer_id=offer_id,
+                            display_summary_text=card_summary,
+                        )
+                    else:
+                        notify.broadcast_text(
+                            suggestion,
+                            pnl_footer=pnl_footer,
+                            offer_id=offer_id,
+                            display_summary_text=card_summary,
+                        )
+                except Exception:
+                    logger.exception("Watchdog broadcast failed for %s", cycle_id)
 
             try:
                 notify.send_watchdog_monitor_alert(
@@ -857,8 +935,9 @@ def run_watchdog() -> list[Suggestion] | None:
             _record_fire(key, cycle_id)
             fired.append(suggestion)
             logger.info(
-                "Watchdog trade fired: cycle=%s product=%s trigger=%s "
+                "Watchdog %s: cycle=%s product=%s trigger=%s "
                 "action=%s entry=%s charts=%s",
+                "trade fired" if will_execute else "shadow logged",
                 cycle_id,
                 product_id,
                 trigger.name,

@@ -256,6 +256,10 @@ def _ensure_position_columns(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE paper_positions ADD COLUMN tps_hit INTEGER NOT NULL DEFAULT 0"
         )
+    if "mfe_pct" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN mfe_pct REAL")
+    if "mae_pct" not in cols:
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN mae_pct REAL")
 
 
 def _ensure_position_archive_columns(conn: sqlite3.Connection) -> None:
@@ -872,14 +876,42 @@ def _add_to_net_position(
 def _match_position_for_add(
     same_side: list[dict],
     suggestion: Suggestion,
+    spot: float | None = None,
 ) -> dict | None:
-    """Only scale into a position that shares the same order_block_ref."""
+    """Only scale into a position that shares the same order_block_ref and is in profit."""
     ref = suggestion.order_block_ref
     if not ref:
         return same_side[0] if same_side else None
     for pos in same_side:
-        if str(pos.get("order_block_ref") or "") == ref:
-            return pos
+        if str(pos.get("order_block_ref") or "") != ref:
+            continue
+        if spot is not None:
+            unrealized_r = _unrealized_r(pos, float(spot))
+            if unrealized_r is None or unrealized_r < bot_config.SCALE_IN_MIN_R:
+                logger.info(
+                    "Paper: scale-in blocked underwater pos=%s R=%.2f",
+                    pos.get("id"),
+                    unrealized_r if unrealized_r is not None else float("nan"),
+                )
+                continue
+        return pos
+    return None
+
+
+def _unrealized_r(pos: dict, spot: float) -> float | None:
+    try:
+        entry = float(pos["avg_entry"])
+        stop = float(pos["stop_loss"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return None
+    side = str(pos.get("side") or "")
+    if side == "long":
+        return (spot - entry) / risk
+    if side == "short":
+        return (entry - spot) / risk
     return None
 
 
@@ -952,7 +984,7 @@ def _apply_trade_with_netting(
                 eth_qty_override=abs(target_signed),
                 spots=resolved,
             )
-        target_pos = _match_position_for_add(same_side, suggestion)
+        target_pos = _match_position_for_add(same_side, suggestion, spot=spot)
         if target_pos is None:
             # Different OB / new idea — open a separate position with its own SL.
             return _open_position(
@@ -1496,7 +1528,7 @@ def _close_position_at_market(
         cash,
         equity,
         pos_id,
-        reason,
+        reason or "market",
         product_id=product_id,
     )
     notional = eth_qty * avg_entry
@@ -1514,9 +1546,11 @@ def _close_position_at_market(
             "qty": eth_qty,
             "stop_loss": position.get("stop_loss"),
             "take_profits": list(position.get("take_profits") or []),
-            "close_reason": reason,
+            "close_reason": reason or "market",
             "pnl_usd": pnl_usd,
             "pnl_pct": (pnl_usd / notional * 100) if notional else 0.0,
+            "mfe_pct": position.get("mfe_pct"),
+            "mae_pct": position.get("mae_pct"),
         }
     )
     return cash
@@ -1555,6 +1589,98 @@ def _sl_after_tp_hit(
     return float(ordered_tps[tps_hit_after - 2])
 
 
+def _update_excursions(
+    conn: sqlite3.Connection,
+    position: dict,
+    spot: float,
+) -> None:
+    """Track max favorable / adverse excursion (% of entry) while position is open."""
+    entry = float(position["avg_entry"])
+    if entry <= 0:
+        return
+    side = str(position["side"])
+    if side == "long":
+        fav = (spot - entry) / entry * 100.0
+        adv = (entry - spot) / entry * 100.0
+    else:
+        fav = (entry - spot) / entry * 100.0
+        adv = (spot - entry) / entry * 100.0
+    prev_mfe = position.get("mfe_pct")
+    prev_mae = position.get("mae_pct")
+    mfe = max(float(prev_mfe), fav) if prev_mfe is not None else fav
+    mae = max(float(prev_mae), adv) if prev_mae is not None else adv
+    conn.execute(
+        "UPDATE paper_positions SET mfe_pct = ?, mae_pct = ? WHERE id = ?",
+        (mfe, mae, int(position["id"])),
+    )
+    position["mfe_pct"] = mfe
+    position["mae_pct"] = mae
+
+
+def tighten_stops_from_pulse(
+    *,
+    recommendation: str,
+    spots: dict[str, float] | None = None,
+    event_id: int | None = None,
+) -> list[dict]:
+    """Mechanically ratchet house stops when a macro pulse says tighten_sl.
+
+    Moves stop halfway from current stop toward entry (never widens). Returns
+    list of {position_id, old_sl, new_sl} for applied changes.
+    """
+    if str(recommendation or "").strip() != "tighten_sl":
+        return []
+    init_db()
+    resolved = spots or {}
+    if not resolved:
+        try:
+            import research
+
+            resolved = research.get_spot_prices()
+        except Exception:
+            resolved = {}
+    applied: list[dict] = []
+    with _connect() as conn:
+        for position in list(_fetch_open_positions(conn)):
+            side = str(position["side"])
+            entry = float(position["avg_entry"])
+            old_sl = float(position["stop_loss"])
+            # Midpoint of entry↔current SL — tighter risk, never widens.
+            mid = round((entry + old_sl) / 2.0, 2)
+            if side == "long":
+                new_sl = max(old_sl, mid)
+                if new_sl <= old_sl:
+                    continue
+            else:
+                new_sl = min(old_sl, mid)
+                if new_sl >= old_sl:
+                    continue
+            conn.execute(
+                "UPDATE paper_positions SET stop_loss = ? WHERE id = ?",
+                (new_sl, int(position["id"])),
+            )
+            applied.append(
+                {
+                    "position_id": int(position["id"]),
+                    "product_id": _pos_product(position),
+                    "side": side,
+                    "old_sl": old_sl,
+                    "new_sl": new_sl,
+                    "event_id": event_id,
+                    "source": "macro_pulse_tighten_sl",
+                }
+            )
+            logger.info(
+                "Macro pulse tightened SL pos=%s %s %s → %s",
+                position["id"],
+                side,
+                old_sl,
+                new_sl,
+            )
+        conn.commit()
+    return applied
+
+
 def _check_sl_tp_closes(
     conn: sqlite3.Connection,
     cash: float,
@@ -1568,6 +1694,7 @@ def _check_sl_tp_closes(
         spot = _spot_for(product_id, spots)
         if spot <= 0:
             continue
+        _update_excursions(conn, position, spot)
         sl = float(position["stop_loss"])
         if _sl_hit(side, spot, sl):
             cash = _close_position_at_market(

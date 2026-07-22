@@ -93,6 +93,13 @@ TAG_GLOSSARY: dict[str, str] = {
         "Macro soft-gate: high-severity headlines lean against new shorts "
         "(chart structure still primary)."
     ),
+    "watchdog_shadow": "Watchdog suggestion logged without paper execution (execute off).",
+    "watchdog_shorts_disabled": "Watchdog short trigger shadowed — WATCHDOG_ALLOW_SHORTS is off.",
+    "scale_in_blocked_underwater": "Scale-in skipped — position was below +0.5R.",
+    "htf_bull": "Coarse HTF regime label: bullish H4 structure bias.",
+    "htf_bear": "Coarse HTF regime label: bearish H4 structure bias.",
+    "htf_mixed": "Coarse HTF regime label: mixed / conflicted H4 structure.",
+    "relative_strength_gate": "ETH/BTC relative-strength soft-gate blocked this entry.",
 }
 
 

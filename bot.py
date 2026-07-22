@@ -629,6 +629,45 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _reply(update, f"{reply}\n\n{pnl}"[:4096])
 
 
+async def cmd_watchdog(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle watchdog paper execution (admin/monitor only)."""
+    user = update.effective_user
+    if user is None or update.message is None:
+        return
+    if not _is_macro_admin(user.id):
+        await _reply(update, "Watchdog control is restricted to the monitor/admin account.")
+        return
+
+    args = [a.lower() for a in (context.args or [])]
+    current = bot_config.watchdog_execute_enabled()
+    if not args or args[0] in {"status", "?"} :
+        await _reply(
+            update,
+            (
+                f"Watchdog scan: {'on' if bot_config.WATCHDOG_ENABLED else 'off'}\n"
+                f"Paper execute: {'on' if current else 'off'}\n"
+                f"Allow shorts: {'yes' if bot_config.WATCHDOG_ALLOW_SHORTS else 'no'}\n\n"
+                "Usage: /watchdog on | off | status"
+            ),
+        )
+        return
+
+    if args[0] in {"on", "enable", "1", "true"}:
+        bot_config.set_watchdog_execute_enabled(True)
+        await _reply(
+            update,
+            "Watchdog paper execution ON. "
+            f"Shorts still {'allowed' if bot_config.WATCHDOG_ALLOW_SHORTS else 'shadow-only'}.",
+        )
+        return
+    if args[0] in {"off", "disable", "0", "false"}:
+        bot_config.set_watchdog_execute_enabled(False)
+        await _reply(update, "Watchdog paper execution OFF — scan/shadow only.")
+        return
+
+    await _reply(update, "Usage: /watchdog on | off | status")
+
+
 def _is_macro_admin(user_id: int) -> bool:
     admin = config.TELEGRAM_ADMIN_CHAT_ID or config.MONITOR_CHAT_ID
     if admin and str(user_id) == str(admin).strip():
@@ -705,6 +744,7 @@ def build_application() -> Application:
     app.add_handler(CommandHandler("chart", cmd_chart))
     app.add_handler(CommandHandler("research", cmd_research))
     app.add_handler(CommandHandler("macro", cmd_macro))
+    app.add_handler(CommandHandler("watchdog", cmd_watchdog))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     return app

@@ -3,7 +3,7 @@
 > Single source of truth for architecture and status of the Telegram trading bot.
 > See **Documentation maintenance** below — update this file (and related deploy docs) whenever behaviour changes.
 
-**Last updated:** 2026-07-21
+**Last updated:** 2026-07-22
 
 ---
 
@@ -153,7 +153,7 @@ flowchart TD
 flowchart TD
     WD1[Loop ETH + BTC timeframes + live spot<br/>apply_live_spot_to_bars on M5] --> CTX2[build MarketContext per product<br/>spot_override]
     RS2[Build W1 ETH/BTC bias once] --> RSG{relative-strength<br/>soft gate}
-    CTX2 --> TRG[evaluate_triggers]
+    CTX2 --> TRG[evaluate_triggers + scale-in if >= +0.5R]
     TRG --> T1[short_trigger_retest]
     TRG --> T2[m5_sfp_close on latest bar]
     TRG --> T3[m5_ob_fib tranches 0.25 / 0.50 + 0.718 add]
@@ -162,17 +162,22 @@ flowchart TD
     T1 --> RSG
     T2 --> RSG
     T3 --> RSG
-    RSG --> CD{product-prefixed cooldown?}
+    RSG --> SHORTS{WATCHDOG_ALLOW_SHORTS<br/>or shadow?}
+    SHORTS --> CD{product-prefixed cooldown?}
     CD -->|active| WSKIP[skip trigger]
-    CD -->|ok| BS[build_suggestion programmatic]
+    CD -->|ok| BS[build_suggestion programmatic<br/>stop floor >= 0.8%]
 
     BS --> V2[validate_suggestion<br/>same M5 OB + fib + trade risk]
     V2 --> WCH[render output charts]
-    WCH --> WLG[ledger + paper.update]
-    WLG --> SUM2[display_summary]
-    SUM2 --> WBD[notify.broadcast / broadcast_text<br/>concise card + See more]
-    WLG --> WAL[send_watchdog_monitor_alert]
+    WCH --> WLG[ledger.append executed flag + macro_json]
+    WLG --> EXEC{watchdog_execute_enabled?}
+    EXEC -->|no| SHADOW[shadow only + monitor alert]
+    EXEC -->|yes| PAPER[paper.update + offers + broadcast]
+    PAPER --> WAL[send_watchdog_monitor_alert]
+    SHADOW --> WAL
 ```
+
+Default: **scan on, paper execute off** (`WATCHDOG_EXECUTE_ENABLED=False`). Operators flip execute via dashboard `/api/ops/watchdog-execute` (Bearer `MACRO_WEBHOOK_SECRET`) or Telegram `/watchdog on|off`. Shorts stay shadow-only while `WATCHDOG_ALLOW_SHORTS=False`.
 
 ---
 
@@ -281,7 +286,10 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Flag / setting | Default | Effect |
 |---|---|---|
-| `WATCHDOG_ENABLED` | `True` | enables sub-hourly watchdog job |
+| `WATCHDOG_ENABLED` | `True` | enables sub-hourly watchdog **scan** job |
+| `WATCHDOG_EXECUTE_ENABLED` | `False` | paper fills + subscriber offers when True; else shadow-log only (runtime override via meta / dashboard / `/watchdog`) |
+| `WATCHDOG_ALLOW_SHORTS` | `False` | when False, short triggers are shadow-logged only |
+| `SCALE_IN_MIN_R` | `0.5` | scale-in requires unrealized ≥ this many R |
 | `WATCHDOG_INTERVAL_SEC` | `60` | scan cadence (clamped 60–300s in `main.py`) |
 | `WATCHDOG_COOLDOWN_SEC` | `1800` (30m) | suppress repeat fire on same M5 OB |
 | `BROADCAST_ONLY_TRADES` | `True` | suppress `no_trade` subscriber DMs |
@@ -311,8 +319,8 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 | `MACRO_CONTEXT_ENABLED` | `True` | RSS poll + macro advisory injection |
 | `MACRO_POLL_INTERVAL_SEC` | `300` | RSS poll cadence |
 | `MACRO_MIN_SEVERITY_INJECT` | `3` | min LLM severity for prompt injection |
-| `MACRO_PULSE_MIN_SEVERITY` | `4` | position-aware pulse + monitor alert |
-| `MACRO_WATCHDOG_GATE_MIN_SEVERITY` | `4` | soft gate conflicting watchdog entries |
+| `MACRO_PULSE_MIN_SEVERITY` | `4` | position-aware pulse + mechanical house `tighten_sl` |
+| `MACRO_WATCHDOG_GATE_MIN_SEVERITY` | `4` | soft gate conflicting watchdog entries (not raised after audit) |
 | `MACRO_LLM_PROMOTE_THRESHOLD` | `40` | min keyword_score before Haiku classify |
 | `MACRO_DEFAULT_TTL_HOURS` | `24` | fallback TTL for classified events |
 | `ZMOVE_ENABLED` | `True` | ETH H1 price/volume z-score subscriber alerts |
@@ -322,6 +330,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 | `ZMOVE_COOLDOWN_SEC` | `7200` | per-metric suppress window after fire |
 | `ZMOVE_PRODUCT_ID` | `"ETH-USD"` | product scanned for z-moves |
 | hourly interval | `3600s` | `hourly_job` cadence in `main.py` |
+| `validate.MIN_STOP_DISTANCE_PCT` | `0.008` (0.8%) | hard floor on stop distance (LLM + watchdog) |
 
 ---
 
@@ -329,6 +338,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 - [ ] Live execution path (`execute.py`, `EXECUTION_MODE=shadow|live`) not implemented — paper only
 - [ ] HTF zone / M5 OB resolver edge cases under active tuning
+- [ ] Ops: flatten oversized open watchdog BTC shorts if still live after deploy (audit risk control)
 
 ---
 
@@ -336,6 +346,7 @@ Defaults from `bot_config.py` (non-secret tunables). Secrets and portfolio size 
 
 | Date | Change |
 |---|---|
+| 2026-07-22 | Paper-audit strategy guards: watchdog paper execute default **off** (scan/shadow + dashboard/`/watchdog` toggle); `WATCHDOG_ALLOW_SHORTS=False`; underwater scale-ins blocked (< +0.5R); stop floor 0.8%; hard audit block on remaining critical findings; ledger `executed`/`trigger_name`/`macro_json`; LLM `macro_note` required when macro injected; macro `tighten_sl` ratchets house stops; MFE/MAE + HTF regime tags (`htf_bull`/`htf_bear`/`htf_mixed`); gate-tag pollution fixed. |
 | 2026-07-22 | Fix Telegram See more wrong-trade: trade offers are immutable after create (no `INSERT OR REPLACE`), chart roles classified by basename suffix, See more omits house PnL footer that could describe another product, and dashboard convention resolver accepts `{cycle}_{PRODUCT_USD}_{tf}_{kind}` broadcast filenames. |
 | 2026-07-21 | `deploy/rescore_macro_events.py`: one-off backfill that re-scores recent `ignored` macro headlines with the current keyword set and classifies any that now clear `MACRO_LLM_PROMOTE_THRESHOLD`. Fixes CLARITY Act headlines staying invisible because keyword edits are not retroactive and the 7-day URL-hash dedup blocks re-ingest. Documented in `CLOUD.md` (run after any `macro/keywords.py` change). |
 | 2026-07-21 | Trading Guide: impulse asymmetry (bull vs bear regime) — Week∩Month structure defines regime; with-trend legs impulsive / counter-legs corrective; conviction favors with-regime M5 OB/SFP entries and fade-the-slow-leg; confirmed structure-shift expects impulsive reverse displacement (trade with it, don’t fade first leg). Sizing unchanged (fixed-fraction). |

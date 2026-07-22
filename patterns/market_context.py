@@ -287,17 +287,22 @@ def build_market_context(
             "cite both for context; entries still follow M5 OB / SFP triggers"
         )
         setup_tags.append("htf_zone_conflict")
+        setup_tags.append("htf_mixed")
     elif zone_snap.primary_bearish:
         low, high = zone_snap.bearish_retest_low, zone_snap.bearish_retest_high
         alerts.append(
             f"Primary H4 zone: BEARISH {zone_snap.primary_bearish.low:,.2f}-"
             f"{zone_snap.primary_bearish.high:,.2f} | supply retest {low:,.2f}-{high:,.2f}"
         )
+        setup_tags.append("htf_bear" if bearish_bias else "htf_mixed")
     elif zone_snap.primary_bullish:
         alerts.append(
             f"Primary H4 zone: BULLISH {zone_snap.primary_bullish.low:,.2f}-"
             f"{zone_snap.primary_bullish.high:,.2f}"
         )
+        setup_tags.append("htf_bull" if not bearish_bias else "htf_mixed")
+    else:
+        setup_tags.append("htf_bear" if bearish_bias else "htf_bull")
 
     if (
         range_24h

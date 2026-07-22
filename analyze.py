@@ -146,6 +146,8 @@ def _build_user_content(
                 "(e.g. short while price is inside a bullish M5 OB, or long against a primary "
                 "bearish H4 zone), briefly say why you still take it (M5 trigger precedence / "
                 "HTF advisory only). "
+                "Include macro_note (string) when Macro context is present — acknowledge "
+                "active headlines or state they are not material. "
                 "Return one JSON trade suggestion. JSON only."
             ),
         },
@@ -212,10 +214,14 @@ def _build_multi_user_content(
                 '{"product_id":"ETH-USD","action":"spot_buy",'
                 '"size":0,"entry":0,"stop_loss":0,"take_profits":[],'
                 '"risk_reward":null,"rationale":"...",'
+                '"macro_note":"1-2 sentences on active macro (or none material)",'
                 '"decision_charts":["H4","H1","M5"],'
                 '"structure_chart":"H4","entry_chart":"M5","order_block":null},'
-                '{"product_id":"BTC-USD","action":"no_trade","rationale":"..."}'
+                '{"product_id":"BTC-USD","action":"no_trade","rationale":"...",'
+                '"macro_note":"none material"}'
                 "]}\n"
+                "When Macro context appears in a product block, macro_note is required "
+                "(acknowledge bias/severity or say macro is not material for this setup). "
                 "The size field is USD notional, not ETH/BTC quantity. It may be 0; "
                 "validation will overwrite it with the configured dollar deployment."
             ),

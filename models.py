@@ -23,6 +23,8 @@ class Suggestion:
   entry_tranche: str | None = None  # e.g. "0.25", "0.50", "0.718", "sweep"
   order_block_ref: str | None = None  # links scale-ins to the same M5 OB
   product_id: str = "ETH-USD"  # Coinbase product, e.g. ETH-USD / BTC-USD
+  macro_note: str | None = None  # required when inject-level macro is active
+  trigger_name: str | None = None  # watchdog structured trigger (e.g. m5_ob_fib_short)
 
   @classmethod
   def no_trade(
@@ -51,6 +53,8 @@ class Suggestion:
     entry = data.get("entry_chart")
     deploy_raw = data.get("deploy_pct")
     product = str(data.get("product_id") or "ETH-USD")
+    macro_raw = data.get("macro_note")
+    trigger_raw = data.get("trigger_name")
     return cls(
       action=str(data.get("action", "no_trade")),
       size=float(data.get("size", 0) or 0),
@@ -67,4 +71,6 @@ class Suggestion:
       entry_tranche=str(data["entry_tranche"]) if data.get("entry_tranche") else None,
       order_block_ref=str(data["order_block_ref"]) if data.get("order_block_ref") else None,
       product_id=product,
+      macro_note=str(macro_raw).strip() if macro_raw else None,
+      trigger_name=str(trigger_raw).strip() if trigger_raw else None,
     )

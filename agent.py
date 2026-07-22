@@ -16,6 +16,7 @@ import notify
 import paper
 import research
 import user_books
+from macro.context import decision_macro_snapshot
 from models import Suggestion
 from patterns.htf_structure import detect_htf_zones
 from patterns.key_levels import compute_key_levels
@@ -131,6 +132,28 @@ def run_cycle() -> list[tuple[Suggestion, list[str]]] | None:
             context_block = critic.build_market_context_block(market_context.alerts)
             suggestion.rationale = critic.compose_rationale(llm_body, context_block)
 
+            # Hard execution block: remaining critical findings on a trade → no_trade.
+            critical_left = [
+                f
+                for f in refine.final_findings
+                if f.severity == "critical" or f.code == "LLM_HALLUCINATION"
+            ]
+            if suggestion.action != "no_trade" and critical_left:
+                codes = sorted({f.code for f in critical_left})
+                logger.warning(
+                    "Hard audit block for %s: findings=%s",
+                    product_id,
+                    codes,
+                )
+                llm_body = critic.sanitize_rationale(
+                    market_context, downgrade_reason=codes
+                )
+                suggestion = Suggestion.no_trade(llm_body, product_id=product_id)
+                suggestion.decision_charts = ["H4"]
+                suggestion.rationale = critic.compose_rationale(
+                    llm_body, context_block
+                )
+
             output_paths = charts.build_trade_broadcast_charts(
                 suggestion,
                 data_by_product[product_id],
@@ -146,12 +169,15 @@ def run_cycle() -> list[tuple[Suggestion, list[str]]] | None:
                 if market_context.setup_tags
                 else None
             )
+            macro_snap = decision_macro_snapshot()
             row_id = ledger.append(
                 suggestion,
                 product_cycle_id,
                 price,
                 chart_for_ledger,
                 setup_tags=setup_tags,
+                executed=suggestion.action != "no_trade",
+                macro_json=macro_snap,
             )
             ledger.require_cycle_recorded(product_cycle_id)
             # House/agent book only — user books open on Accept.

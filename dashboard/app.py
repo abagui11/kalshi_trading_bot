@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 import audit
+import bot_config
 import config
 import ledger
 import paper
@@ -44,6 +45,10 @@ class MacroIngestBody(BaseModel):
     source: str | None = None
     published_at: str | None = None
     force_classify: bool = False
+
+
+class WatchdogExecuteBody(BaseModel):
+    enabled: bool
 
 
 def create_app() -> FastAPI:
@@ -175,6 +180,36 @@ def create_app() -> FastAPI:
     @app.get("/api/macro")
     async def api_macro() -> dict:
         return data.get_macro_payload()
+
+    @app.get("/api/ops/watchdog-execute")
+    async def api_watchdog_execute_status() -> dict:
+        return {
+            "watchdog_enabled": bot_config.WATCHDOG_ENABLED,
+            "execute_enabled": bot_config.watchdog_execute_enabled(),
+            "allow_shorts": bot_config.WATCHDOG_ALLOW_SHORTS,
+            "config_default": bot_config.WATCHDOG_EXECUTE_ENABLED,
+        }
+
+    @app.post("/api/ops/watchdog-execute")
+    async def api_watchdog_execute_set(
+        body: WatchdogExecuteBody,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        secret = config.MACRO_WEBHOOK_SECRET
+        if not secret:
+            raise HTTPException(
+                status_code=503,
+                detail="MACRO_WEBHOOK_SECRET not configured (ops auth)",
+            )
+        expected = f"Bearer {secret}"
+        if authorization != expected:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        enabled = bot_config.set_watchdog_execute_enabled(bool(body.enabled))
+        return {
+            "ok": True,
+            "execute_enabled": enabled,
+            "allow_shorts": bot_config.WATCHDOG_ALLOW_SHORTS,
+        }
 
     @app.post("/api/macro/ingest")
     async def api_macro_ingest(

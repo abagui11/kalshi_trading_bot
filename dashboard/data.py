@@ -126,6 +126,9 @@ def get_status_payload() -> dict[str, Any]:
         "h4_charts": h4_charts,
         "h4_chart_url": (h4_charts[0]["url"] if h4_charts else legacy_url),
         "open_by_product": _open_counts_by_product(positions),
+        "watchdog_enabled": bot_config.WATCHDOG_ENABLED,
+        "watchdog_execute_enabled": bot_config.watchdog_execute_enabled(),
+        "watchdog_allow_shorts": bot_config.WATCHDOG_ALLOW_SHORTS,
     }
 
 

@@ -90,6 +90,7 @@ CRITICAL_RETRY_CODES = frozenset({
     "KEY_LEVEL_MISMATCH",
     "CONTEXT_CONFLICT_UNACKNOWLEDGED",
     "LLM_HALLUCINATION",
+    "MACRO_NOTE_MISSING",
 })
 
 _LONG_ACTIONS = frozenset({"spot_buy", "deriv_buy"})
@@ -363,11 +364,8 @@ def _collect_refine_findings(
     deterministic: list[AuditFinding],
     llm_hallucinations: list[AuditFinding],
 ) -> list[AuditFinding]:
-    critical = [
-        f
-        for f in deterministic
-        if f.severity == "critical" and f.code in CRITICAL_RETRY_CODES
-    ]
+    # Any critical finding blocks / retries — not only the named CRITICAL_RETRY set.
+    critical = [f for f in deterministic if f.severity == "critical"]
     critical.extend(f for f in llm_hallucinations if f.code == "LLM_HALLUCINATION")
     return critical
 
@@ -842,6 +840,32 @@ def _check_context_conflict(
     )
 
 
+def _check_macro_note(
+    ctx: MarketContext,
+    suggestion: Suggestion | None,
+) -> AuditFinding | None:
+    """Require macro_note when inject-level macro is present in market context."""
+    if suggestion is None or suggestion.action == "no_trade":
+        return None
+    summary = ctx.summary_text or ""
+    if "=== Macro context" not in summary:
+        return None
+    note = (suggestion.macro_note or "").strip()
+    if note:
+        return None
+    # Also accept an explicit macro acknowledgment already in the rationale.
+    if re.search(r"(?i)\bmacro\b|\bheadline\b|\bnews\b|\bsev(?:erity)?\s*\d", suggestion.rationale or ""):
+        return None
+    return AuditFinding(
+        code="MACRO_NOTE_MISSING",
+        message=(
+            "Inject-level macro context is active but macro_note is empty — "
+            "acknowledge the headlines or state that macro is not material"
+        ),
+        severity="critical",
+    )
+
+
 def verify_deterministic(
     text: str,
     ctx: MarketContext,
@@ -853,6 +877,10 @@ def verify_deterministic(
     conflict = _check_context_conflict(text, ctx, suggestion)
     if conflict is not None:
         findings.append(conflict)
+
+    macro_note_finding = _check_macro_note(ctx, suggestion)
+    if macro_note_finding is not None:
+        findings.append(macro_note_finding)
 
     if not text.strip():
         return findings

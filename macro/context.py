@@ -110,6 +110,22 @@ def append_macro_to_lines(lines: list[str]) -> None:
         lines.append(block)
 
 
+def decision_macro_snapshot(posture: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Structured macro state at decision time for ledger / audit joins."""
+    posture = posture or active_posture()
+    events = posture.get("events") or []
+    event_ids = [int(e["id"]) for e in events if e.get("id") is not None]
+    return {
+        "injected": bool(events),
+        "eth_bias": posture.get("eth_bias") or "neutral",
+        "max_severity": int(posture.get("max_severity") or 0),
+        "gate_long": bool(posture.get("gate_long")),
+        "gate_short": bool(posture.get("gate_short")),
+        "event_ids": event_ids,
+        "event_count": len(event_ids),
+    }
+
+
 def macro_payload_for_dashboard() -> dict[str, Any]:
     """Dashboard API: active + recent macro headlines."""
     posture = active_posture()
@@ -126,6 +142,8 @@ def macro_payload_for_dashboard() -> dict[str, Any]:
         "monitored_sources": store.get_monitored_feed_labels(),
         "active": [_event_summary(e) for e in active],
         "recent": [_event_summary(e) for e in recent],
+        "watchdog_execute_enabled": bot_config.watchdog_execute_enabled(),
+        "watchdog_allow_shorts": bot_config.WATCHDOG_ALLOW_SHORTS,
     }
 
 

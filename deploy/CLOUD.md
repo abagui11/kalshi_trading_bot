@@ -349,6 +349,33 @@ Fields: `title` (required), `url`, `summary`, `source`, `published_at`, `force_c
 
 **Read API:** `GET /api/macro` — JSON for dashboard refresh (posture, active events, recent ingested).
 
+Severity ≥ 4 pulses still notify operators; **`tighten_sl` also ratchets house stops** (midpoint of entry↔current SL, never widens). `consider_close` stays advisory-only.
+
+### Watchdog paper-execute toggle (post-audit default: off)
+
+After the Jul-2026 paper audit, watchdog **scans and shadow-logs** by default but does **not** open house paper trades until execute is turned on. Shorts stay shadow-only while `WATCHDOG_ALLOW_SHORTS=False` in `bot_config.py`.
+
+**Dashboard:** house journal → *Watchdog controls* — enter `MACRO_WEBHOOK_SECRET` and click Execute on/off.
+
+**API:**
+
+```bash
+# Status
+curl "https://dashboard.yourdomain.com/api/ops/watchdog-execute"
+
+# Enable paper fills (Bearer = MACRO_WEBHOOK_SECRET)
+curl -X POST "https://dashboard.yourdomain.com/api/ops/watchdog-execute" \
+  -H "Authorization: Bearer YOUR_MACRO_WEBHOOK_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}'
+```
+
+**Telegram (admin/monitor only):** `/watchdog status` · `/watchdog on` · `/watchdog off`
+
+Runtime override is stored in SQLite meta (`watchdog_execute_enabled`); config default remains `WATCHDOG_EXECUTE_ENABLED=False`.
+
+**Ops note:** if an oversized watchdog BTC short is still open after deploy, flatten or hard-cap it manually before re-enabling execute.
+
 ### Deploy dashboard updates
 
 Same as the bot — push to GitHub, then on the server:
