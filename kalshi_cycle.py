@@ -12,6 +12,7 @@ import anthropic
 
 import bot_config
 import config
+import kalshi_charts
 import kalshi_client
 import notify
 import paper
@@ -67,6 +68,10 @@ def settle_due() -> list[dict[str, Any]]:
                 result,
                 float(closed.get("pnl_usd") or 0),
             )
+            try:
+                notify.broadcast_settle(closed)
+            except Exception:
+                logger.exception("Settle notify failed for %s", ticker)
             settled.append(closed)
     return settled
 
@@ -121,16 +126,17 @@ Recent Coinbase {product_id}-USD M5 candles:
 
 Decide whether YES (price up vs window open reference) or NO is underpriced vs a simple fair value.
 Return ONLY JSON:
-{{"side":"YES"|"NO"|"SKIP","fair_yes_cents":0-100,"rationale":"one or two short sentences"}}
+{{"side":"YES"|"NO"|"SKIP","fair_yes_cents":0-100,"rationale":"3-6 sentence detailed explanation"}}
 
 Rules:
 - fair_yes_cents is your estimated probability of YES in cents (50 = coin flip).
 - SKIP if edge is unclear or market is extreme (<5 or >95) without conviction.
-- Be concise. No markdown.
+- Rationale must cover: (1) what recent M5 candles show, (2) where price sits vs strike/open reference if known, (3) whether Kalshi mid looks rich/cheap vs your fair, (4) why you trade or skip.
+- No markdown. Plain sentences only.
 """
     msg = client.messages.create(
         model=config.ANTHROPIC_MODEL,
-        max_tokens=300,
+        max_tokens=700,
         messages=[{"role": "user", "content": prompt}],
     )
     text = ""
@@ -253,17 +259,63 @@ def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:
     return suggestion
 
 
+def _strike_from_market(market: dict[str, Any]) -> float | None:
+    raw = market.get("floor_strike")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _notify_decision(
+    suggestion: KalshiSuggestion,
+    *,
+    market: dict[str, Any] | None = None,
+    opened: bool = False,
+) -> None:
+    strike = _strike_from_market(market or {})
+    chart_path = None
+    try:
+        chart_path = kalshi_charts.build_decision_chart(suggestion, strike=strike)
+    except Exception:
+        logger.exception("Chart build failed for %s", suggestion.product_id)
+    try:
+        notify.broadcast_decision(
+            suggestion, chart_path=chart_path, opened=opened
+        )
+    except Exception:
+        logger.exception("Decision notify failed for %s", suggestion.market_ticker)
+
+
 def run_decision_cycle() -> list[KalshiSuggestion]:
-    """For each configured series, decide and optionally paper-open + notify."""
+    """For each configured series, decide and notify (trade or skip)."""
     results: list[KalshiSuggestion] = []
     for series in config.KALSHI_SERIES:
         try:
             markets = kalshi_client.get_open_markets(series)
         except Exception:
             logger.exception("Failed to list markets for %s", series)
+            skip = KalshiSuggestion.skip(
+                series=series,
+                market_ticker="",
+                product_id=bot_config.series_product(series),
+                rationale=f"skipped: failed to list open markets for {series}",
+            )
+            results.append(skip)
+            _notify_decision(skip)
             continue
         if not markets:
             logger.info("%s: no open markets", series)
+            skip = KalshiSuggestion.skip(
+                series=series,
+                market_ticker="",
+                product_id=bot_config.series_product(series),
+                rationale=f"skipped: no open markets for {series} right now",
+            )
+            results.append(skip)
+            _notify_decision(skip)
             continue
         market = markets[0]
         suggestion = _decide_for_market(series, market)
@@ -278,7 +330,7 @@ def run_decision_cycle() -> list[KalshiSuggestion]:
             )
             opened = paper.open_trade(suggestion)
             if opened:
-                notify.broadcast_kalshi_trade(suggestion)
+                _notify_decision(suggestion, market=market, opened=True)
                 logger.info(
                     "Paper opened %s %s x%s @ %.1f¢",
                     suggestion.product_id,
@@ -288,8 +340,23 @@ def run_decision_cycle() -> list[KalshiSuggestion]:
                 )
             else:
                 logger.warning("Paper open failed for %s", suggestion.market_ticker)
+                suggestion = KalshiSuggestion.skip(
+                    series=suggestion.series,
+                    market_ticker=suggestion.market_ticker,
+                    product_id=suggestion.product_id,
+                    rationale=(
+                        f"signal was {suggestion.side} but paper open failed "
+                        f"(cash or duplicate). Original why: {suggestion.rationale}"
+                    ),
+                    mid_cents=suggestion.mid_cents,
+                    fair_yes_cents=suggestion.fair_yes_cents,
+                    expiry_ts=suggestion.expiry_ts,
+                )
+                results[-1] = suggestion
+                _notify_decision(suggestion, market=market, opened=False)
         else:
             logger.info("%s %s", series, suggestion.rationale)
+            _notify_decision(suggestion, market=market, opened=False)
     return results
 
 
