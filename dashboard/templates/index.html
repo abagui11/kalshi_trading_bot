@@ -2,658 +2,91 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>ETH/BTC Trading Agent</title>
-  <link rel="stylesheet" href="/static/style.css?v=journal11">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kalshi 15m Paper</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 1.5rem; max-width: 900px; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    .sub { color: #666; margin-bottom: 1.25rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+    .stat { border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; }
+    .stat .label { font-size: 0.75rem; color: #666; }
+    .stat .value { font-size: 1.2rem; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th { color: #555; font-weight: 600; }
+    .pos { color: #0a7; }
+    .neg { color: #c33; }
+  </style>
 </head>
 <body>
-  {% macro tip_badge(label, class_name='badge-none') -%}
-  <span class="badge {{ class_name }}" title="{{ label|tag_tip }}">{{ label }}</span>
-  {%- endmacro %}
+  <h1>Kalshi 15m paper</h1>
+  <p class="sub">
+    {{ status.env }} · paper_only={{ status.paper_only }} ·
+    {{ status.series | join(', ') }} · epoch {{ status.epoch }}
+  </p>
 
-  {% macro score_badge(score, badge, tip) -%}
-  {% if score is not none %}
-  <span class="badge badge-{{ badge }}" title="{{ tip }}">{{ score }}</span>
-  {% else %}—{% endif %}
-  {%- endmacro %}
-
-  {% macro trade_card(t, mode) %}
-  {#- Button accordion (not <details>) — native disclosure markers can't be reliably hidden. -#}
-  <div class="trade-card{% if mode == 'open' %} trade-live{% elif mode == 'archived' %} trade-archived{% endif %}">
-    <button type="button" class="trade-summary" aria-expanded="false">
-      <span class="trade-summary-main">
-        <span class="trade-title">
-          <span class="trade-chevron" aria-hidden="true">▸</span>
-          <span class="trade-title-text">{{ trade_title(t.opened_at, t.side) }} · {{ t.product_label or 'ETH' }}</span>
-        </span>
-        <span class="trade-badges">
-          {{ tip_badge(t.product_label or 'ETH', 'badge-none') }}
-          {{ tip_badge(t.side, 'badge-good' if t.side == 'long' else 'badge-bad') }}
-          {% if mode == 'open' %}
-          {{ tip_badge('LIVE', 'badge-live') }}
-          {% elif t.close_reason %}
-          {{ tip_badge(t.close_reason) }}
-          {% endif %}
-          {% if t.action %}{{ tip_badge(t.action) }}{% endif %}
-          {% for tag in (t.setup_tags or [])[:4] %}
-          {{ tip_badge(tag) }}
-          {% endfor %}
-        </span>
-        <span class="trade-prices">
-          {% if mode == 'open' %}
-          ${{ "%.2f"|format(t.entry or t.avg_entry) }}
-          {% if t.spot %} · mark ${{ "%.2f"|format(t.spot) }}{% endif %}
-          {% else %}
-          ${{ "%.2f"|format(t.entry) }} → ${{ "%.2f"|format(t.exit) }}
-          {% endif %}
-        </span>
-        <span class="trade-pnl {{ 'pos-row' if t.is_winner else 'neg-row' }}">
-          {{ "%+.2f"|format(t.pnl_usd) }}
-          <span class="trade-pnl-pct">({{ "%+.1f"|format(t.pnl_pct) }}%)</span>
-        </span>
-        <span class="trade-meta sub">
-          {% if mode == 'open' %}
-          Opened {{ t.opened_at|trade_time }}
-          {% else %}
-          {{ t.opened_at|trade_time }} → {{ t.closed_at|trade_time }}
-          {% endif %}
-        </span>
-      </span>
-      {% if t.thumb_chart_url %}
-      <span class="trade-thumb-wrap">
-        <img class="trade-thumb zoomable" src="{{ t.thumb_chart_url }}" alt="Trade chart thumbnail" loading="lazy" width="120" height="72">
-      </span>
-      {% endif %}
-    </button>
-    <div class="trade-body" hidden>
-      {% if t.structure_chart_url or t.execution_chart_url %}
-      <div class="trade-charts">
-        {% if t.structure_chart_url %}
-        <figure class="trade-chart">
-          <figcaption>Structure · H4 · {{ t.product_label or 'ETH' }}</figcaption>
-          <img class="chart-img zoomable" src="{{ t.structure_chart_url }}" alt="H4 structure chart" loading="lazy">
-        </figure>
-        {% endif %}
-        {% if t.execution_chart_url %}
-        <figure class="trade-chart">
-          <figcaption>Execution · M5 · {{ t.product_label or 'ETH' }}</figcaption>
-          <img class="chart-img zoomable" src="{{ t.execution_chart_url }}" alt="M5 execution chart" loading="lazy">
-        </figure>
-        {% endif %}
-      </div>
-      {% endif %}
-
-      <div class="levels-strip">
-        <div class="level">
-          <span class="label">Entry</span>
-          <span class="value">${{ "%.2f"|format(t.entry or t.avg_entry) }}</span>
-        </div>
-        {% if t.stop_loss is not none %}
-        <div class="level">
-          <span class="label">SL</span>
-          <span class="value">${{ "%.2f"|format(t.stop_loss) }}</span>
-        </div>
-        {% endif %}
-        {% for tp in t.take_profits[:3] %}
-        <div class="level">
-          <span class="label">TP{{ loop.index }}</span>
-          <span class="value">${{ "%.2f"|format(tp) }}</span>
-        </div>
-        {% endfor %}
-        {% if t.risk_reward is not none %}
-        <div class="level">
-          <span class="label">R:R</span>
-          <span class="value">{{ "%.2f"|format(t.risk_reward) }}</span>
-        </div>
-        {% endif %}
-        {% if t.order_block %}
-        <div class="level">
-          <span class="label">OB</span>
-          <span class="value">${{ "%.0f"|format(t.order_block.low) }}–{{ "%.0f"|format(t.order_block.high) }}</span>
-        </div>
-        {% endif %}
-        {% if t.size_usd is not none %}
-        <div class="level">
-          <span class="label">Size</span>
-          <span class="value">${{ "%.2f"|format(t.size_usd) }}</span>
-        </div>
-        {% endif %}
-        {% if t.qty is not none or t.eth_qty is not none %}
-        <div class="level">
-          <span class="label">Qty</span>
-          <span class="value">{{ "%.4f"|format(t.qty or t.eth_qty) }} {{ t.product_label or 'ETH' }}</span>
-        </div>
-        {% endif %}
-      </div>
-
-      {% if mode == 'open' and (t.dist_to_sl_pct is not none or t.dist_to_tp_pct is not none) %}
-      <p class="sub trade-distances">
-        {% if t.dist_to_sl_pct is not none %}{{ "%.2f"|format(t.dist_to_sl_pct) }}% to SL{% endif %}
-        {% if t.dist_to_sl_pct is not none and t.dist_to_tp_pct is not none %} · {% endif %}
-        {% if t.dist_to_tp_pct is not none %}{{ "%.2f"|format(t.dist_to_tp_pct) }}% to TP{% endif %}
-      </p>
-      {% endif %}
-
-      {% if t.participation %}
-      <p class="sub trade-participation">
-        Participation:
-        {{ t.participation.accepted }} in
-        · {{ t.participation.rejected }} out
-        · {{ t.participation.expired }} expired
-        · {{ t.participation.pending }} pending
-        {% if t.participation.allocated_usd %}
-        · ${{ "%.0f"|format(t.participation.allocated_usd) }} allocated
-        {% endif %}
-      </p>
-      {% endif %}
-
-      {% if t.setup_tags %}
-      <div class="trade-tags">
-        {% for tag in t.setup_tags %}
-        {{ tip_badge(tag) }}
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      {% if t.rationale %}
-      <div class="rationale">
-        <h3>Rationale</h3>
-        <p>{{ t.rationale }}</p>
-      </div>
-      {% else %}
-      <p class="sub">No rationale stored for this cycle.</p>
-      {% endif %}
-
-      <p class="sub trade-cycles">
-        Open cycle {{ t.open_cycle_id or '—' }}
-        {% if t.close_cycle_id %} · Close cycle {{ t.close_cycle_id }}{% endif %}
-      </p>
+  <div class="grid">
+    <div class="stat">
+      <div class="label">Equity</div>
+      <div class="value">${{ "%.2f"|format(performance.equity_usd) }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Realized PnL</div>
+      <div class="value">${{ "%+.2f"|format(performance.realized_pnl_usd) }}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Win rate</div>
+      <div class="value">{{ "%.0f"|format(performance.win_rate * 100) }}%</div>
+    </div>
+    <div class="stat">
+      <div class="label">Closed</div>
+      <div class="value">{{ performance.wins }}W / {{ performance.losses }}L</div>
     </div>
   </div>
-  {% endmacro %}
 
-  <div class="wrap">
-    <header>
-      <h1>ETH/BTC Trading Agent</h1>
-      <p class="sub">Public agent journal — charts, relative strength, and house-book trades. Personal demo books live under My book in Telegram.</p>
-    </header>
-
-    <section class="card" id="status-card">
-      <h2>Agent status</h2>
-      <div class="metrics" style="margin-bottom:12px">
-        <div class="metric">
-          <div class="label">ETH-USD</div>
-          <div class="value" id="spot-eth">${{ "%.2f"|format(status.eth_spot or status.spot) }}</div>
-        </div>
-        <div class="metric">
-          <div class="label">BTC-USD</div>
-          <div class="value" id="spot-btc">${{ "%.2f"|format(status.btc_spot or 0) }}</div>
-        </div>
-      </div>
-      {% if status.score_badge != 'none' %}
-      <span class="badge badge-{{ status.score_badge }}" id="score-badge" title="{{ status.score_tooltip or '' }}">
-        Chart-read {{ status.chart_read_score }}/100
-      </span>
-      {% endif %}
-      {% if status.phase and status.phase != 'idle' %}
-      <span class="badge badge-none">{{ status.phase }}</span>
-      {% endif %}
-      <p class="headline" id="headline">{{ status.headline }}</p>
-      {% if status.alerts %}
-      <ul class="plain">
-        {% for alert in status.alerts %}
-        <li>{{ alert }}</li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-      {% if status.watching %}
-      <p class="sub" style="margin-top:10px">Watching</p>
-      <ul class="plain">
-        {% for item in status.watching %}
-        <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-      {% if status.ts %}
-      <p class="sub" style="margin-top:8px">Last cycle: {{ status.ts }}</p>
-      {% endif %}
-    </section>
-
-    <section class="card" id="ops-card">
-      <h2>Watchdog controls</h2>
-      <p class="sub" id="watchdog-status">
-        Scan:
-        <strong>{% if status.watchdog_enabled %}on{% else %}off{% endif %}</strong>
-        · Paper execute:
-        <strong id="wd-execute-label">{% if status.watchdog_execute_enabled %}on{% else %}off{% endif %}</strong>
-        · Shorts allowed:
-        <strong>{% if status.watchdog_allow_shorts %}yes{% else %}no{% endif %}</strong>
-      </p>
-      <p class="sub" style="margin-bottom:8px">
-        Ops toggle requires <code>MACRO_WEBHOOK_SECRET</code> as Bearer token
-        (same as macro ingest). Default execute is off after the paper audit.
-      </p>
-      <div class="ops-row">
-        <input type="password" id="ops-secret" placeholder="Ops Bearer secret" autocomplete="off" />
-        <button type="button" id="wd-execute-on" class="btn">Execute on</button>
-        <button type="button" id="wd-execute-off" class="btn">Execute off</button>
-      </div>
-      <p class="sub" id="wd-ops-msg" style="margin-top:8px"></p>
-    </section>
-
-    <section class="card" id="macro-card">
-      <h2>Macro news monitor</h2>
-      {% if macro.enabled %}
-      <p class="sub" id="macro-posture">
-        Posture:
-        <strong>{{ macro.posture.eth_bias }}</strong>
-        · max severity {{ macro.posture.max_severity }}
-        {% if macro.posture.gate_long %} · <span class="macro-gate">gate longs</span>{% endif %}
-        {% if macro.posture.gate_short %} · <span class="macro-gate">gate shorts</span>{% endif %}
-      </p>
-      <p class="sub" style="margin-bottom:10px">
-        Sources: {{ macro.monitored_sources | join(', ') }}
-      </p>
-      <div class="macro-scroll" id="macro-feed">
-        {% if macro.active %}
-        <p class="sub macro-scroll-label">Active (injected into agent)</p>
-        <ul class="macro-list" id="macro-active">
-          {% for item in macro.active %}
-          <li class="macro-item macro-active-item">
-            <span class="badge badge-macro-sev-{{ item.severity }}">SEV {{ item.severity }}</span>
-            <span class="badge badge-none">{{ item.eth_bias or 'neutral' }}</span>
-            {% if item.url %}
-            <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a>
-            {% else %}
-            {{ item.title }}
-            {% endif %}
-            {% if item.eth_impact_summary %}
-            <p class="macro-impact">{{ item.eth_impact_summary }}</p>
-            {% endif %}
-          </li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <p class="sub" id="macro-active-empty">No active macro events (severity ≥ 3).</p>
-        {% endif %}
-        {% if macro.recent %}
-        <p class="sub macro-scroll-label">Recent ingested</p>
-        <ul class="macro-list" id="macro-recent">
-          {% for item in macro.recent[:15] %}
-          <li class="macro-item {% if item.status == 'ignored' %}macro-ignored{% endif %}">
-            <span class="badge badge-none">kw {{ item.keyword_score }}</span>
-            {% if item.severity %}<span class="badge badge-macro-sev-{{ item.severity }}">SEV {{ item.severity }}</span>{% endif %}
-            <span class="macro-status">{{ item.status }}</span>
-            {% if item.url %}
-            <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.title }}</a>
-            {% else %}
-            {{ item.title }}
-            {% endif %}
-          </li>
-          {% endfor %}
-        </ul>
-        {% endif %}
-      </div>
+  <h2>Open ({{ open_positions|length }})</h2>
+  <table>
+    <thead>
+      <tr><th>Asset</th><th>Side</th><th>Qty</th><th>Entry</th><th>Market</th><th>Expiry</th></tr>
+    </thead>
+    <tbody>
+      {% for p in open_positions %}
+      <tr>
+        <td>{{ p.product_id }}</td>
+        <td>{{ p.side }}</td>
+        <td>{{ p.contracts }}</td>
+        <td>{{ "%.1f"|format(p.entry_cents) }}¢</td>
+        <td>{{ p.market_ticker }}</td>
+        <td>{{ p.expiry_ts or '—' }}</td>
+      </tr>
       {% else %}
-      <p class="sub">Macro context disabled.</p>
-      {% endif %}
-    </section>
+      <tr><td colspan="6">No open positions</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 
-    {% if status.h4_charts %}
-    <section class="card">
-      <h2>H4 structure (marked)</h2>
-      <p class="sub" style="margin-bottom:8px">Agent H4 Structure Charts</p>
-      <div class="h4-charts">
-        {% for c in status.h4_charts %}
-        <figure class="h4-chart">
-          <figcaption>{{ c.product_label }}-USD · H4</figcaption>
-          <img class="chart-img zoomable" src="{{ c.url }}" alt="{{ c.product_label }} H4 marked chart" loading="lazy">
-        </figure>
-        {% endfor %}
-      </div>
-    </section>
-    {% elif status.h4_chart_url %}
-    <section class="card">
-      <h2>H4 structure (marked)</h2>
-      <p class="sub" style="margin-bottom:8px">What the agent sees now</p>
-      <img class="chart-img zoomable" id="h4-chart" src="{{ status.h4_chart_url }}" alt="H4 marked chart" loading="lazy">
-    </section>
-    {% endif %}
-
-    <section class="card">
-      <h2>Agent book (house)</h2>
-      <div class="metrics">
-        <div class="metric">
-          <div class="label">Equity</div>
-          <div class="value">${{ "%.2f"|format(performance.equity_usd) }}</div>
-        </div>
-        <div class="metric">
-          <div class="label">Total P&amp;L</div>
-          <div class="value {{ 'pos' if performance.total_pnl_usd >= 0 else 'neg' }}">
-            {{ "%+.2f"|format(performance.total_pnl_usd) }} ({{ "%+.1f"|format(performance.total_pnl_pct) }}%)
-          </div>
-        </div>
-        <div class="metric">
-          <div class="label">Win rate</div>
-          <div class="value">{{ performance.win_rate_pct }}%</div>
-        </div>
-        <div class="metric">
-          <div class="label">Avg chart-read (30d)</div>
-          <div class="value">
-            {% if performance.chart_read.avg_score_30d is not none %}
-            {{ performance.chart_read.avg_score_30d }}/100
-            {% else %}—{% endif %}
-          </div>
-        </div>
-      </div>
-      <p class="sub" style="margin-top:10px">
-        House/agent reference book (not user capital)
-        · ${{ "%.0f"|format(performance.starting_usd) }} start
-        {% if performance.epoch.epoch_label %}({{ performance.epoch.epoch_label }}){% endif %}
-        · {{ performance.closed_trade_count }} closed · {{ performance.open_count }} open
-        {% if performance.open_by_product %}
-        (
-        {% for pid, n in performance.open_by_product.items() %}
-        {{ pid.replace('-USD','') }} {{ n }}{% if not loop.last %} · {% endif %}
-        {% endfor %}
-        )
-        {% endif %}
-        · issue rate {{ performance.chart_read.issue_rate_pct }}%
-        {% if performance.epoch.epoch_started_at %}
-        · epoch since {{ performance.epoch.epoch_started_at }}
-        {% endif %}
-      </p>
-    </section>
-
-    {% if positions or closed_trades %}
-    <section class="card journal-card">
-      <h2>Trade journal</h2>
-      <p class="sub journal-intro">
-        Expand a trade to see structure, execution, levels, and the bot’s rationale.
-      </p>
-
-      {% if positions %}
-      <h3 class="journal-subhead">Open</h3>
-      <div class="trade-list">
-        {% for pos in positions %}
-        {{ trade_card(pos, 'open') }}
-        {% endfor %}
-      </div>
-      {% endif %}
-
-      {% if closed_trades %}
-      <h3 class="journal-subhead">Closed</h3>
-      <div class="trade-list" id="closed-trades-list">
-        {% for t in closed_trades %}
-        {{ trade_card(t, 'closed') }}
-        {% endfor %}
-      </div>
-      <button type="button" class="load-more" id="load-more-closed" data-offset="{{ closed_trades|length }}">Load more closed trades</button>
-      {% endif %}
-    </section>
-    {% endif %}
-
-    {% if archived_trades %}
-    <section class="card journal-card journal-archived">
-      <h2>Archived trades (prior epoch)</h2>
-      <p class="sub">Legacy book — preserved for reference; not included in P&amp;L above.</p>
-      <div class="trade-list">
-        {% for t in archived_trades %}
-        {{ trade_card(t, 'archived') }}
-        {% endfor %}
-      </div>
-    </section>
-    {% endif %}
-
-    <section class="card">
-      <h2>Hourly cycles</h2>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Asset</th>
-              <th>Action</th>
-              <th>Score</th>
-            </tr>
-          </thead>
-          <tbody id="cycles-body">
-            {% for c in cycles %}
-            <tr>
-              <td>{{ c.ts[:16] if c.ts else '—' }}</td>
-              <td>{{ (c.product_id or 'ETH-USD')|replace('-USD','') }}</td>
-              <td>{{ c.action }}</td>
-              <td>
-                {% if c.chart_read_score is not none %}
-                <span class="badge badge-{{ c.score_badge }}" title="{{ c.score_tooltip or '' }}">{{ c.chart_read_score }}</span>
-                {% else %}—{% endif %}
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-      <button type="button" class="load-more" id="load-more-cycles" data-offset="{{ cycles|length }}">Load more cycles</button>
-    </section>
-
-    <footer>
-      Paper trading only — not financial advice. Data refreshes every 60s.
-    </footer>
-  </div>
-
-  <div id="chart-lightbox" class="chart-lightbox" hidden>
-    <button type="button" class="chart-lightbox-close" aria-label="Close enlarged chart">&times;</button>
-    <img class="chart-lightbox-img" alt="">
-  </div>
-
-  <script>
-    function initTradeCards(root) {
-      (root || document).querySelectorAll('.trade-card > .trade-summary').forEach(function (btn) {
-        if (btn.dataset.bound) return;
-        btn.dataset.bound = '1';
-        btn.addEventListener('click', function (ev) {
-          if (ev.target.closest('.zoomable')) return;
-          var card = btn.closest('.trade-card');
-          var body = card.querySelector('.trade-body');
-          var open = !card.classList.contains('is-open');
-          card.classList.toggle('is-open', open);
-          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-          if (body) body.hidden = !open;
-        });
-      });
-    }
-    initTradeCards();
-
-    function initChartLightbox() {
-      var box = document.getElementById('chart-lightbox');
-      var big = box.querySelector('.chart-lightbox-img');
-      var closeBtn = box.querySelector('.chart-lightbox-close');
-
-      function openLightbox(src, alt) {
-        big.src = src;
-        big.alt = alt || 'Enlarged chart';
-        box.hidden = false;
-        document.body.classList.add('lightbox-open');
-      }
-
-      function closeLightbox() {
-        box.hidden = true;
-        big.removeAttribute('src');
-        document.body.classList.remove('lightbox-open');
-      }
-
-      document.querySelectorAll('img.zoomable').forEach(function (img) {
-        if (img.dataset.bound) return;
-        img.dataset.bound = '1';
-        img.setAttribute('role', 'button');
-        img.setAttribute('tabindex', '0');
-        img.setAttribute('title', 'Click to enlarge');
-        img.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          openLightbox(img.currentSrc || img.src, img.alt);
-        });
-        img.addEventListener('keydown', function (ev) {
-          if (ev.key === 'Enter' || ev.key === ' ') {
-            ev.preventDefault();
-            ev.stopPropagation();
-            openLightbox(img.currentSrc || img.src, img.alt);
-          }
-        });
-      });
-
-      closeBtn.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        closeLightbox();
-      });
-      box.addEventListener('click', function (ev) {
-        if (ev.target === box) closeLightbox();
-      });
-      document.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape' && !box.hidden) closeLightbox();
-      });
-    }
-    initChartLightbox();
-
-    async function setWatchdogExecute(enabled) {
-      var msg = document.getElementById('wd-ops-msg');
-      var secretEl = document.getElementById('ops-secret');
-      var secret = secretEl ? secretEl.value.trim() : '';
-      if (!secret) {
-        if (msg) msg.textContent = 'Enter the ops Bearer secret first.';
-        return;
-      }
-      try {
-        var res = await fetch('/api/ops/watchdog-execute', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + secret,
-          },
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        var data = await res.json().catch(function () { return {}; });
-        if (!res.ok) {
-          if (msg) msg.textContent = data.detail || ('HTTP ' + res.status);
-          return;
-        }
-        var label = document.getElementById('wd-execute-label');
-        if (label) label.textContent = data.execute_enabled ? 'on' : 'off';
-        if (msg) {
-          msg.textContent = data.execute_enabled
-            ? 'Watchdog paper execution ON (shorts still gated by WATCHDOG_ALLOW_SHORTS).'
-            : 'Watchdog paper execution OFF — scan/shadow only.';
-        }
-      } catch (e) {
-        if (msg) msg.textContent = 'Request failed.';
-      }
-    }
-    var onBtn = document.getElementById('wd-execute-on');
-    var offBtn = document.getElementById('wd-execute-off');
-    if (onBtn) onBtn.addEventListener('click', function () { setWatchdogExecute(true); });
-    if (offBtn) offBtn.addEventListener('click', function () { setWatchdogExecute(false); });
-
-    function money(n) {
-      return '$' + Number(n || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      });
-    }
-
-    async function refresh() {
-      try {
-        const [spotRes, statusRes, macroRes] = await Promise.all([
-          fetch('/api/spot'),
-          fetch('/api/status'),
-          fetch('/api/macro'),
-        ]);
-        const spot = await spotRes.json();
-        const status = await statusRes.json();
-        const macro = await macroRes.json();
-        var ethEl = document.getElementById('spot-eth');
-        var btcEl = document.getElementById('spot-btc');
-        if (ethEl) ethEl.textContent = money(spot.eth || spot.spot);
-        if (btcEl) btcEl.textContent = money(spot.btc || (spot.spots && spot.spots['BTC-USD']));
-        document.getElementById('headline').textContent = status.headline;
-        var scoreBadge = document.getElementById('score-badge');
-        if (scoreBadge && status.score_tooltip) {
-          scoreBadge.setAttribute('title', status.score_tooltip);
-        }
-        const postureEl = document.getElementById('macro-posture');
-        if (postureEl && macro.posture) {
-          let gates = '';
-          if (macro.posture.gate_long) gates += ' · gate longs';
-          if (macro.posture.gate_short) gates += ' · gate shorts';
-          postureEl.innerHTML =
-            'Posture: <strong>' + macro.posture.eth_bias + '</strong>' +
-            ' · max severity ' + macro.posture.max_severity + gates;
-        }
-      } catch (e) { /* offline */ }
-    }
-    setInterval(refresh, 60000);
-
-    var cyclesBtn = document.getElementById('load-more-cycles');
-    if (cyclesBtn) {
-      cyclesBtn.addEventListener('click', async function () {
-        var offset = Number(cyclesBtn.dataset.offset || 0);
-        var res = await fetch('/api/cycles?limit=25&offset=' + offset);
-        var rows = await res.json();
-        if (!rows.length) {
-          cyclesBtn.disabled = true;
-          cyclesBtn.textContent = 'No more cycles';
-          return;
-        }
-        var body = document.getElementById('cycles-body');
-        rows.forEach(function (c) {
-          var tr = document.createElement('tr');
-          var asset = (c.product_id || 'ETH-USD').replace('-USD', '');
-          var scoreHtml = c.chart_read_score != null
-            ? '<span class="badge badge-' + c.score_badge + '" title="' + (c.score_tooltip || '').replace(/"/g, '&quot;') + '">' + c.chart_read_score + '</span>'
-            : '—';
-          tr.innerHTML =
-            '<td>' + (c.ts ? c.ts.slice(0, 16) : '—') + '</td>' +
-            '<td>' + asset + '</td>' +
-            '<td>' + c.action + '</td>' +
-            '<td>' + scoreHtml + '</td>';
-          body.appendChild(tr);
-        });
-        cyclesBtn.dataset.offset = String(offset + rows.length);
-      });
-    }
-
-    var closedBtn = document.getElementById('load-more-closed');
-    if (closedBtn) {
-      closedBtn.addEventListener('click', async function () {
-        var offset = Number(closedBtn.dataset.offset || 0);
-        var res = await fetch('/api/trades/paper?limit=15&offset=' + offset);
-        var trades = await res.json();
-        if (!trades.length) {
-          closedBtn.disabled = true;
-          closedBtn.textContent = 'No more trades';
-          return;
-        }
-        // Full card HTML is complex — reload page section simply by appending a compact row list.
-        var list = document.getElementById('closed-trades-list');
-        trades.forEach(function (t) {
-          var div = document.createElement('div');
-          div.className = 'trade-card';
-          div.innerHTML =
-            '<button type="button" class="trade-summary" aria-expanded="false">' +
-            '<span class="trade-summary-main">' +
-            '<span class="trade-title"><span class="trade-chevron" aria-hidden="true">▸</span> ' +
-            (t.product_label || 'ETH') + ' ' + (t.side || '') + '</span>' +
-            '<span class="trade-pnl">' + (t.pnl_usd >= 0 ? '+' : '') + Number(t.pnl_usd || 0).toFixed(2) +
-            ' (' + (t.pnl_pct >= 0 ? '+' : '') + Number(t.pnl_pct || 0).toFixed(1) + '%)</span>' +
-            '<span class="trade-meta sub">' + (t.opened_at || '') + ' → ' + (t.closed_at || '') + '</span>' +
-            '</span></button>' +
-            '<div class="trade-body" hidden><p class="rationale">' +
-            (t.rationale || 'No rationale stored.') + '</p></div>';
-          list.appendChild(div);
-        });
-        initTradeCards(list);
-        closedBtn.dataset.offset = String(offset + trades.length);
-      });
-    }
-  </script>
+  <h2>Closed (last {{ closed_positions|length }})</h2>
+  <table>
+    <thead>
+      <tr><th>Asset</th><th>Side</th><th>Qty</th><th>Entry</th><th>Result</th><th>PnL</th><th>Closed</th></tr>
+    </thead>
+    <tbody>
+      {% for p in closed_positions %}
+      <tr>
+        <td>{{ p.product_id }}</td>
+        <td>{{ p.side }}</td>
+        <td>{{ p.contracts }}</td>
+        <td>{{ "%.1f"|format(p.entry_cents) }}¢</td>
+        <td>{{ p.result }}</td>
+        <td class="{{ 'pos' if (p.pnl_usd or 0) > 0 else 'neg' }}">${{ "%+.2f"|format(p.pnl_usd or 0) }}</td>
+        <td>{{ p.closed_at or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7">No settled trades yet</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
 </body>
 </html>
