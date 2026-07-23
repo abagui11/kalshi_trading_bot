@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) -> str:
     """Detailed trade or skip card for Telegram."""
     expiry = suggestion.expiry_ts or "?"
-    edge = (
-        f"{suggestion.edge_cents:.1f}¢"
-        if suggestion.edge_cents is not None
-        else "n/a"
-    )
     mid = (
         f"{suggestion.mid_cents:.1f}¢"
         if suggestion.mid_cents is not None
@@ -45,20 +40,30 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
     )
     ict_bias = suggestion.ict_bias or "n/a"
     ict_action = suggestion.ict_action or "n/a"
+    fair = (
+        f"{suggestion.fair_yes_cents:.1f}¢"
+        if suggestion.fair_yes_cents is not None
+        else "n/a"
+    )
+    edge_s = (
+        f"{suggestion.edge_cents:+.1f}¢"
+        if suggestion.edge_cents is not None
+        else "n/a"
+    )
     lines = [
         header,
         f"Asset: {suggestion.product_id}",
         f"Series: {suggestion.series}",
         f"Market: {suggestion.market_ticker or 'n/a'}",
         f"Decision: {suggestion.side}",
-        f"ICT bias: {ict_bias} ({ict_action}) → {suggestion.side}",
-        "Strategy: ICT H4/H1/M5 OB + fib / SFP",
+        f"Trigger: {suggestion.trigger_type or 'n/a'} | ICT: {ict_bias} ({ict_action})",
+        f"Gate: {suggestion.gate_outcome or 'n/a'}",
     ]
     if suggestion.is_trade():
         lines.extend(
             [
                 f"Contracts: {suggestion.contracts}",
-                f"Entry: {suggestion.entry_cents:.1f}¢"
+                f"Entry (side fill): {suggestion.entry_cents:.1f}¢"
                 if suggestion.entry_cents is not None
                 else "Entry: n/a",
             ]
@@ -66,7 +71,7 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
     lines.extend(
         [
             f"Kalshi YES mid: {mid}",
-            f"Price hygiene edge: {edge} (min {config.KALSHI_MIN_EDGE_CENTS}¢)",
+            f"Model fair YES: {fair} (edge {edge_s}, min {config.KALSHI_MIN_EDGE_CENTS:.0f}¢)",
             f"Sizing: bankroll ${config.KALSHI_BANKROLL_USD:.0f} · "
             f"deploy {config.KALSHI_DEPLOY_PCT*100:.0f}%/trade · max {config.KALSHI_MAX_CONTRACTS} ct",
             f"Expiry / close: {expiry}",

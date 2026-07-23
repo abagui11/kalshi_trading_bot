@@ -62,10 +62,13 @@ class TestKalshiIctGate(unittest.TestCase):
             order_blocks=[],
             m5_sfps=[],
         )
-        # Without matching M5 OB list, _validate_order_block_entry may still pass
-        # when context has empty order_blocks (early return). Spot fib check should fail.
+        # Soft mode keeps action (gate logged separately).
+        soft = kalshi_ict.validate_kalshi_ict_suggestion(suggestion, ctx, soft=True)
+        self.assertEqual(soft.action, "spot_buy")
+        self.assertEqual(kalshi_ict.evaluate_gate_outcome(suggestion, ctx), "fail")
+        # Hard mode still raises.
         with self.assertRaises(ValueError):
-            kalshi_ict.validate_kalshi_ict_suggestion(suggestion, ctx)
+            kalshi_ict.validate_kalshi_ict_suggestion(suggestion, ctx, soft=False)
 
 
 if __name__ == "__main__":

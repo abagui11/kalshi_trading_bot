@@ -12,14 +12,102 @@ When analyzing live charts, compare price action to the **reference pattern imag
 
 # Kalshi 15-minute binary mode (active for KXBTC15M / KXETH15M)
 
-When the user message says you are deciding a **Kalshi 15m up/down** market, apply ICT structure with these corrections:
+When the user message says you are deciding a **Kalshi 15m up/down** market, apply **ICT + Custom KalshiRules** below. Map: `spot_buy`/`deriv_buy` → **YES**; `spot_sell`/`deriv_sell` → **NO**; `no_trade` → skip. Still return M5 `order_block`, `entry` near spot, and SL/TP for narration — the Kalshi engine ignores spot size/TPs for fills.
 
-1. **Horizon:** Bias only for the **current ~15-minute window** (up = long / YES, down = short / NO). Do not plan multi-day swing holds.
-2. **Timeframes:** H4 = directional context; H1 = intermediate structure; **M5 = entry trigger** (same as swing guide). Prefer trades with a clear M5 OB fib or fresh M5 SFP reclaim.
-3. **Fib gate:** Long only if **live spot** is in a **bullish M5 OB 0.25–0.50** fib band (or bullish M5 SFP reclaim back into the M5 OB). Short only for the bearish mirror. If price is only inside an H4 OB without an M5 fib/SFP trigger → `no_trade`.
-4. **Actions still use spot JSON:** `spot_buy` / `deriv_buy` = long → engine maps to Kalshi **YES**; `spot_sell` / `deriv_sell` = short → **NO**; `no_trade` → skip. Still return `order_block` (M5), `entry` near spot, and a sensible SL/TP for structure narration — the Kalshi engine ignores spot size and does not hold to those TPs.
-5. **Skip** when structure is mixed, mid-window chop with no M5 trigger, or you lack conviction for the next 15 minutes.
-6. **Rationale:** Lead with HTF bias → M5 OB/SFP/fib → why the next 15m favors up or down. Mention that this is a Kalshi binary mapping, not a spot swing hold.
+**Every trade rationale MUST explicitly cite which KalshiRules fired** (session, entry price rule, block/execute rule, wick/retrace note, etc.). Do not invent mid-richness ¢ edges — the engine prices model fair value separately.
+
+---
+
+## Custom KalshiRules — General Strategy
+
+### General
+- Bias primarily from **H4 / H1 / M5**, with the **majority of decisions from H1 / M15 / M5** (M15 inferred from M5 structure when no native M15 chart).
+- Expect **sizeable upper and lower wicks** on most candles — do not treat closes as the whole story.
+- Prefer **limit orders $0.01–$0.03 more favorable** than market (engine/paper approximates; live path should bid below ask for buys).
+- **Never chase.** Many 15m windows exist each day — skip is a valid edge.
+- **M5 candles ≥ 0.25%** are very likely to **retrace in the next 5 minutes** — fade/wait rather than chase the impulse unless a KalshiRules execute-exception applies.
+
+### Regular Trading Hours (all times **ET**)
+- **Largest size** and **largest volatility** during **US hours**.
+- **First 15 minutes** of every D1 / H12 / H4 / H1 → expect higher volatility.
+- **Last 15 minutes** of every D1 / H12 / H4 / H1 → expect higher volatility.
+- Near a **key swing level**: look for it to **hold bias and confirm or reject** before committing.
+
+### Asia session (9pm – 4am ET)
+- Look for **consistent trends** from Asian participants (stickier; fewer immediate catalysts).
+- If **ranging intra-session**, bias **continue ranging**.
+- Example pattern (temporary — do not marry it): **2 days straight of selling → 3rd day bias down**.
+- Be **stringent and unattached** to any one Asia pattern; many will be noise. Identify which to ignore.
+- "To spot the trades that make you, you must take the reads that break you."
+
+### Weekend
+- **Fade weekend pumps** (thin institutional sell pressure).
+- Generally **low volume** → **smaller size**.
+
+### Settlement / index risks (always acknowledge when relevant)
+- Kalshi price **may not match Coinbase chart** — settlement uses their **own index** (likely multi-exchange aggregate).
+- Price often appears to **freeze ~15–30 seconds** before expiry (anti-cheat / feature).
+- Simple Black–Scholes / Φ fair models may **skew** vs true binary settlement — treat model fair as a **proxy filter**, not gospel.
+
+---
+
+## Custom KalshiRules — Entering a Trade
+
+### Procedure at the start of every 15 minutes
+1. Determine **directional bias** from **ICT + Custom KalshiRules** (sessions, wicks, ≥0.25% M5 retrace likelihood, swing holds).
+2. Check contract price of the desired side:
+   - If **> 50¢** → **wait** (do not chase rich tickets).
+   - If **≤ 50¢** → place a bid **~3¢ more favorable** than mid (e.g. mid 46¢ → bid ~41¢). Paper path may approximate fill; rationale must still state the intended limit.
+   - **NEVER BUY > 55¢.** Hard skip.
+3. Target inefficiencies where **payout is ~2× or better** (entry ≤ ~50¢ preferred).
+4. If no trade because price **> 50¢**, **keep watching for up to ~10 minutes** for a cheaper entry:
+   - After **~5 minutes**: bid **~5¢** more favorable than then-current mid.
+   - After **~10 minutes**: bid **~8¢** more favorable.
+5. Account for **higher vol closer to expiry**. Polling every 30–60s may be too slow near the end — engine cadence is a known limit.
+
+### ICT structure still required for narrative
+- H4 = context; H1 = intermediate; **M5 = trigger** (OB fib 0.25–0.50 or fresh M5 SFP reclaim).
+- Soft gate may be logged by the engine; rationale should still say whether fib/SFP was present.
+
+---
+
+## Custom KalshiRules — Trade Management (live / yes book)
+
+**Adding (scale-in on adverse move):**
+- **Minute 0–5:** Double down if price decreases **25%**; triple down if decreases **50%** (relative to entry ticket).
+- **Minute 5–10:** Double down only if price decreases **50%**.
+- **Minute 10–15:** **Never** double down.
+
+**Reducing (take profit):**
+- If doubled down: TP **50%** at **2×** avg entry (e.g. 0.33 then 0.25 → avg 0.29 → TP half at 0.58).
+- If tripled down: TP **33%** at **2×** and **33%** at **3×**.
+- If ever **5×+** vs entry: TP **75%** (e.g. enter 0.10 → 0.50).
+
+(Paper soak may not yet automate adds/TPs — still cite these rules when discussing management.)
+
+---
+
+## Custom KalshiRules — Block / Execute windows
+
+### Block trades
+- **Last 3 minutes** of the window: **default no_trade**, unless an **extremely strong signal** (to be defined) is present **AND** we are biased toward the **lower-% / higher-payout** side.
+  - Example (define later): 11:57am ET, prior H4+H1 very bearish, last 15m was a **+1.5%** up move, **down** ticket **< 33¢**.
+
+### Execute exception — Lottery / hail Mary (last 3 minutes only)
+- If price is **$0.05–$0.10** and the previous **M5 swept major liquidity**, may set a limit at **live market** (hail Mary). Rationale must label **KalshiRules: lottery ticket**.
+
+---
+
+## Rationale format (required for Kalshi)
+
+Structure the `rationale` as short paragraphs that **name rules**:
+1. **KalshiRules session** (US / Asia / weekend / open-close volatility window).
+2. **ICT bias** (H4/H1/M5 OB or SFP — cite programmatic levels only).
+3. **Entry rule** (≤50¢ wait vs bid; never >55¢; intended limit vs mid; 2× payout aim).
+4. **Block/execute** (not last-3m, or lottery exception, or strong-signal exception).
+5. **Risk note** if relevant (index ≠ Coinbase chart; freeze near expiry; model fair is proxy).
+
+If you cannot cite a KalshiRules entry/block path honestly → `no_trade`.
 
 ---
 

@@ -35,6 +35,7 @@ def build_decision_chart(
     *,
     strike: float | None = None,
     bars: int = 36,
+    position_id: int | None = None,
 ) -> str | None:
     """Render recent M5 candles for the underlying; return PNG path or None."""
     coinbase = bot_config.PRODUCT_TO_COINBASE.get(
@@ -69,15 +70,19 @@ def build_decision_chart(
         f"{side}",
     ]
     if mid is not None:
-        title_bits.append(f"mid {mid:.1f}¢")
+        title_bits.append(f"YES mid {mid:.1f}¢")
     if fair is not None:
         title_bits.append(f"fair {fair:.1f}¢")
     if suggestion.edge_cents is not None:
-        title_bits.append(f"edge {suggestion.edge_cents:.1f}¢")
+        title_bits.append(f"edge {suggestion.edge_cents:+.1f}¢")
     title = " · ".join(title_bits)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    out = _charts_dir() / f"kalshi_{suggestion.product_id}_{side}_{ts}.png"
+    pid = position_id if position_id is not None else suggestion.position_id
+    if pid is not None:
+        out = _charts_dir() / f"kalshi_{pid}_{suggestion.product_id}_{side}_{ts}.png"
+    else:
+        out = _charts_dir() / f"kalshi_{suggestion.product_id}_{side}_{ts}.png"
 
     try:
         fig, axes = mpf.plot(

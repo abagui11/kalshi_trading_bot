@@ -20,9 +20,12 @@ PRODUCT_TO_COINBASE: dict[str, str] = {
 # When True, Telegram only gets DMs on real paper trades (not skips).
 BROADCAST_ONLY_TRADES = True
 
-# Pre-broadcast audit refine loop (kept for ICT path reuse).
+# Pre-broadcast audit refine loop (spot + Kalshi ICT rationale critic).
 MAX_REFINE_PASSES = 3
-RUN_LLM_CRITIC_PRE_BROADCAST = False  # Kalshi cycle uses lighter validation
+# Spot path default; Kalshi path passes run_llm_critic=True explicitly.
+RUN_LLM_CRITIC_PRE_BROADCAST = False
+# Kalshi soak: run LLM chart/rationale critic before paper fill.
+KALSHI_RUN_LLM_CRITIC = True
 
 # Fixed-fraction spot sizing (legacy ICT path / validate.py).
 TRADE_DEPLOY_PCT = 0.25

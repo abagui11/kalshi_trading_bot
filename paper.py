@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS paper_positions (
     result TEXT,
     payout_usd REAL,
     pnl_usd REAL,
-    closed_at TEXT
+    closed_at TEXT,
+    chart_path TEXT
 );
 """
 
@@ -71,12 +72,60 @@ CREATE TABLE IF NOT EXISTS paper_trades (
 );
 """
 
+_DECISIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS kalshi_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    cycle_id TEXT,
+    series TEXT,
+    market_ticker TEXT,
+    product_id TEXT,
+    side TEXT,
+    opened INTEGER NOT NULL DEFAULT 0,
+    position_id INTEGER,
+    rationale TEXT,
+    yes_mid_cents REAL,
+    entry_cents REAL,
+    model_fair_yes_cents REAL,
+    edge_cents REAL,
+    fill_vs_mid_cents REAL,
+    spot REAL,
+    strike REAL,
+    spot_vs_strike_pct REAL,
+    tau_sec REAL,
+    sigma REAL,
+    prior_5m_ret REAL,
+    prior_15m_ret REAL,
+    prior_1h_ret REAL,
+    ict_action TEXT,
+    ict_bias TEXT,
+    gate_outcome TEXT,
+    trigger_type TEXT,
+    ob_low REAL,
+    ob_high REAL,
+    h1_bias_tag TEXT,
+    critic_passes INTEGER,
+    critic_findings_json TEXT,
+    critic_downgraded INTEGER NOT NULL DEFAULT 0,
+    would_skip_reasons TEXT,
+    chart_path TEXT
+);
+"""
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
 
 def init_db() -> None:
     with _connect() as conn:
         conn.execute(_STATE_SCHEMA)
         conn.execute(_POSITIONS_SCHEMA)
         conn.execute(_TRADES_SCHEMA)
+        conn.execute(_DECISIONS_SCHEMA)
+        _ensure_column(conn, "paper_positions", "chart_path", "TEXT")
         row = conn.execute("SELECT id FROM paper_state WHERE id = 1").fetchone()
         if row is None:
             start = float(config.PAPER_PORTFOLIO_VALUE)
@@ -381,3 +430,108 @@ def format_positions_text() -> str:
             f"exp {p.get('expiry_ts') or '?'}"
         )
     return "\n".join(lines)
+
+
+def set_position_chart_path(position_id: int, chart_path: str) -> None:
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE paper_positions SET chart_path = ? WHERE id = ?",
+            (chart_path, int(position_id)),
+        )
+        conn.commit()
+
+
+def log_decision(suggestion: KalshiSuggestion) -> int:
+    """Persist every Kalshi decision (trade or skip) for audit/export."""
+    import json
+
+    init_db()
+    fill_vs_mid = None
+    if suggestion.entry_cents is not None and suggestion.mid_cents is not None:
+        # Side fill vs YES mid (informational); for NO, compare to 100-mid.
+        if suggestion.side == "YES":
+            fill_vs_mid = float(suggestion.entry_cents) - float(suggestion.mid_cents)
+        elif suggestion.side == "NO":
+            fill_vs_mid = float(suggestion.entry_cents) - (
+                100.0 - float(suggestion.mid_cents)
+            )
+
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO kalshi_decisions (
+                ts, cycle_id, series, market_ticker, product_id, side, opened,
+                position_id, rationale, yes_mid_cents, entry_cents,
+                model_fair_yes_cents, edge_cents, fill_vs_mid_cents,
+                spot, strike, spot_vs_strike_pct, tau_sec, sigma,
+                prior_5m_ret, prior_15m_ret, prior_1h_ret,
+                ict_action, ict_bias, gate_outcome, trigger_type,
+                ob_low, ob_high, h1_bias_tag,
+                critic_passes, critic_findings_json, critic_downgraded,
+                would_skip_reasons, chart_path
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?
+            )
+            """,
+            (
+                _now(),
+                suggestion.cycle_id,
+                suggestion.series,
+                suggestion.market_ticker,
+                suggestion.product_id,
+                suggestion.side,
+                1 if suggestion.opened else 0,
+                suggestion.position_id,
+                suggestion.rationale,
+                suggestion.mid_cents,
+                suggestion.entry_cents,
+                suggestion.fair_yes_cents,
+                suggestion.edge_cents,
+                fill_vs_mid,
+                suggestion.spot,
+                suggestion.strike,
+                suggestion.spot_vs_strike_pct,
+                suggestion.tau_sec,
+                suggestion.sigma,
+                suggestion.prior_5m_ret,
+                suggestion.prior_15m_ret,
+                suggestion.prior_1h_ret,
+                suggestion.ict_action,
+                suggestion.ict_bias,
+                suggestion.gate_outcome,
+                suggestion.trigger_type,
+                suggestion.ob_low,
+                suggestion.ob_high,
+                suggestion.h1_bias_tag,
+                int(suggestion.critic_passes),
+                json.dumps(suggestion.critic_findings or []),
+                1 if suggestion.critic_downgraded else 0,
+                json.dumps(list(suggestion.would_skip_reasons or [])),
+                suggestion.chart_path,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def get_decisions(limit: int = 200) -> list[dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM kalshi_decisions
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]

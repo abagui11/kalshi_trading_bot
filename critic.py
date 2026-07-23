@@ -91,6 +91,10 @@ CRITICAL_RETRY_CODES = frozenset({
     "CONTEXT_CONFLICT_UNACKNOWLEDGED",
     "LLM_HALLUCINATION",
     "MACRO_NOTE_MISSING",
+    "KALSHI_COIN_FLIP_RATIONALE",
+    "KALSHI_FABRICATED_EDGE",
+    "KALSHI_SETTLEMENT_IGNORED",
+    "KALSHI_MISSING_RULES_CITE",
 })
 
 _LONG_ACTIONS = frozenset({"spot_buy", "deriv_buy"})
@@ -416,8 +420,16 @@ def refine_suggestion(
     *,
     max_passes: int | None = None,
     run_llm_critic: bool | None = None,
+    validate_fn=None,
+    user_preamble: str | None = None,
+    extra_findings_fn=None,
 ) -> RefineResult:
-    """Pre-ledger audit loop: retry propose_trade; downgrade failed trades to no_trade."""
+    """Pre-ledger audit loop: retry propose_trade; downgrade failed trades to no_trade.
+
+    ``validate_fn`` / ``user_preamble`` are forwarded on retries (Kalshi ICT path).
+    ``extra_findings_fn(llm_body, suggestion) -> list[AuditFinding]`` merges
+    Kalshi-specific findings each pass.
+    """
     passes_limit = max_passes if max_passes is not None else bot_config.MAX_REFINE_PASSES
     run_llm = (
         run_llm_critic
@@ -436,6 +448,10 @@ def refine_suggestion(
 
     for pass_num in range(passes_limit + 1):
         deterministic = verify_deterministic(llm_body, market_context, suggestion)
+        if extra_findings_fn is not None:
+            deterministic = list(deterministic) + list(
+                extra_findings_fn(llm_body, suggestion) or []
+            )
         llm_hallucinations: list[AuditFinding] = []
         if run_llm and llm_body:
             llm_hallucinations, _ = verify_llm(
@@ -467,6 +483,8 @@ def refine_suggestion(
             market_context=market_context,
             audit_feedback=feedback,
             product_id=suggestion.product_id,
+            validate_fn=validate_fn,
+            user_preamble=user_preamble,
         )
         llm_body = suggestion.rationale.strip()
         if (

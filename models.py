@@ -95,10 +95,32 @@ class KalshiSuggestion:
     rationale: str
     product_id: str  # BTC | ETH
     fair_yes_cents: float | None = None
-    mid_cents: float | None = None
-    edge_cents: float | None = None
-    ict_action: str | None = None  # spot_buy / spot_sell / no_trade
-    ict_bias: str | None = None  # long | short | none
+    mid_cents: float | None = None  # always YES mid
+    edge_cents: float | None = None  # model_fair − yes_mid
+    ict_action: str | None = None
+    ict_bias: str | None = None
+    # Audit / feature fields (not all persisted on paper_positions)
+    spot: float | None = None
+    strike: float | None = None
+    spot_vs_strike_pct: float | None = None
+    tau_sec: float | None = None
+    sigma: float | None = None
+    prior_5m_ret: float | None = None
+    prior_15m_ret: float | None = None
+    prior_1h_ret: float | None = None
+    gate_outcome: str | None = None
+    trigger_type: str | None = None
+    ob_low: float | None = None
+    ob_high: float | None = None
+    h1_bias_tag: str | None = None
+    critic_passes: int = 0
+    critic_findings: list[dict[str, Any]] = field(default_factory=list)
+    critic_downgraded: bool = False
+    would_skip_reasons: list[str] = field(default_factory=list)
+    chart_path: str | None = None
+    cycle_id: str | None = None
+    opened: bool = False
+    position_id: int | None = None
 
     @classmethod
     def skip(
@@ -110,9 +132,11 @@ class KalshiSuggestion:
         rationale: str,
         mid_cents: float | None = None,
         fair_yes_cents: float | None = None,
+        edge_cents: float | None = None,
         expiry_ts: str | None = None,
         ict_action: str | None = None,
         ict_bias: str | None = None,
+        **kwargs: Any,
     ) -> KalshiSuggestion:
         return cls(
             series=series,
@@ -125,9 +149,10 @@ class KalshiSuggestion:
             product_id=product_id,
             fair_yes_cents=fair_yes_cents,
             mid_cents=mid_cents,
-            edge_cents=None,
+            edge_cents=edge_cents,
             ict_action=ict_action,
             ict_bias=ict_bias,
+            **kwargs,
         )
 
     def is_trade(self) -> bool:
@@ -148,4 +173,16 @@ class KalshiSuggestion:
             "edge_cents": self.edge_cents,
             "ict_action": self.ict_action,
             "ict_bias": self.ict_bias,
+            "spot": self.spot,
+            "strike": self.strike,
+            "spot_vs_strike_pct": self.spot_vs_strike_pct,
+            "tau_sec": self.tau_sec,
+            "sigma": self.sigma,
+            "gate_outcome": self.gate_outcome,
+            "trigger_type": self.trigger_type,
+            "would_skip_reasons": list(self.would_skip_reasons),
+            "critic_downgraded": self.critic_downgraded,
+            "opened": self.opened,
+            "position_id": self.position_id,
+            "chart_path": self.chart_path,
         }

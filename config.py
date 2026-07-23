@@ -102,7 +102,8 @@ _series_raw = _optional("KALSHI_SERIES") or "KXBTC15M,KXETH15M"
 KALSHI_SERIES: list[str] = [s.strip() for s in _series_raw.split(",") if s.strip()]
 KALSHI_PAPER_ONLY: bool = _optional_bool("KALSHI_PAPER_ONLY", default=True)
 KALSHI_MAX_CONTRACTS: int = int(os.getenv("KALSHI_MAX_CONTRACTS", "5") or "5")
-KALSHI_MIN_EDGE_CENTS: float = float(os.getenv("KALSHI_MIN_EDGE_CENTS", "3") or "3")
+# Real |model_fair − mid| threshold (¢). Default 8 — 3¢ is inside noise on 15m binaries.
+KALSHI_MIN_EDGE_CENTS: float = float(os.getenv("KALSHI_MIN_EDGE_CENTS", "8") or "8")
 KALSHI_CYCLE_OFFSET_SEC: int = int(os.getenv("KALSHI_CYCLE_OFFSET_SEC", "30") or "30")
 # Sizing vs ~$77 bankroll: each trade spends up to DEPLOY_PCT of bankroll (capped by MAX_CONTRACTS).
 KALSHI_BANKROLL_USD: float = float(os.getenv("KALSHI_BANKROLL_USD", "77") or "77")
