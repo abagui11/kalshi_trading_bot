@@ -28,14 +28,15 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
             else "n/a"
         )
     )
-    stats = paper.get_stats()
+    stats = paper.get_stats(bot_id=suggestion.bot_id or "control")
+    bot = suggestion.bot_id or "control"
     header = (
-        "Kalshi 15m PAPER TRADE"
+        f"Kalshi 15m [{bot}] PAPER TRADE"
         if suggestion.is_trade() and opened
         else (
-            "Kalshi 15m TRADE SIGNAL"
+            f"Kalshi 15m [{bot}] TRADE SIGNAL"
             if suggestion.is_trade()
-            else "Kalshi 15m SKIP"
+            else f"Kalshi 15m [{bot}] SKIP"
         )
     )
     ict_bias = suggestion.ict_bias or "n/a"
@@ -50,15 +51,22 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
         if suggestion.edge_cents is not None
         else "n/a"
     )
+    tags = suggestion.setup_tags or []
+    tag_s = ", ".join(tags[:8]) if tags else "n/a"
     lines = [
         header,
         f"Asset: {suggestion.product_id}",
         f"Series: {suggestion.series}",
         f"Market: {suggestion.market_ticker or 'n/a'}",
         f"Decision: {suggestion.side}",
-        f"Trigger: {suggestion.trigger_type or 'n/a'} | ICT: {ict_bias} ({ict_action})",
-        f"Gate: {suggestion.gate_outcome or 'n/a'}",
+        f"Trigger: {suggestion.trigger_type or 'n/a'}"
+        + (f" / {suggestion.trigger_name}" if suggestion.trigger_name else "")
+        + f" | ICT: {ict_bias} ({ict_action})",
+        f"Gate: {suggestion.gate_outcome or 'n/a'} | HTF: {suggestion.h1_bias_tag or 'n/a'}",
+        f"Tags: {tag_s}",
     ]
+    if suggestion.skip_codes:
+        lines.append(f"Skip codes: {', '.join(suggestion.skip_codes)}")
     if suggestion.is_trade():
         lines.extend(
             [
@@ -141,13 +149,19 @@ async def broadcast_decision_async(
     suggestion: KalshiSuggestion,
     *,
     chart_path: str | None = None,
+    structure_chart_path: str | None = None,
     opened: bool = False,
 ) -> None:
     bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
     recipients = await _recipients()
     full = format_decision_card(suggestion, opened=opened)[:4096]
-    path = Path(chart_path) if chart_path else None
-    use_photo = path is not None and path.is_file()
+    paths: list[Path] = []
+    for p in (structure_chart_path, chart_path):
+        if not p:
+            continue
+        path = Path(p)
+        if path.is_file() and path not in paths:
+            paths.append(path)
     short_caption = (
         f"{suggestion.product_id} {suggestion.side}"
         + (
@@ -159,12 +173,13 @@ async def broadcast_decision_async(
 
     for user_id in recipients:
         try:
-            if use_photo:
+            for i, path in enumerate(paths):
+                caption = short_caption if i == 0 else path.stem[:64]
                 with path.open("rb") as fh:
                     await bot.send_photo(
                         chat_id=user_id,
                         photo=InputFile(fh, filename=path.name),
-                        caption=short_caption,
+                        caption=caption,
                     )
             await bot.send_message(chat_id=user_id, text=full)
         except Exception:
@@ -179,11 +194,15 @@ def broadcast_decision(
     suggestion: KalshiSuggestion,
     *,
     chart_path: str | None = None,
+    structure_chart_path: str | None = None,
     opened: bool = False,
 ) -> None:
     async def _run() -> None:
         await broadcast_decision_async(
-            suggestion, chart_path=chart_path, opened=opened
+            suggestion,
+            chart_path=chart_path,
+            structure_chart_path=structure_chart_path,
+            opened=opened,
         )
 
     asyncio.run(_run())

@@ -1,4 +1,4 @@
-"""Mechanical short-horizon trigger + HTF veto + KalshiRules helpers."""
+"""KalshiRules helpers + soft HTF alignment (hard veto retired)."""
 
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ LIMIT_IMPROVE_CENTS = 3.0
 BLOCK_LAST_MINUTES = 3.0
 LOTTERY_MIN_CENTS = 5.0
 LOTTERY_MAX_CENTS = 10.0
+# Lottery experiment bot: last-N window (wider than BLOCK_LAST_MINUTES).
+LOTTERY_BOT_WINDOW_MINUTES = 5.0
+LOTTERY_CANCEL_MINUTES_BEFORE_EXPIRY = 1.5
+COINFLIP_MIN_CENTS = 45.0
+COINFLIP_MAX_CENTS = 55.0
+COINFLIP_LIMIT_MIN_CENTS = 7.0
+COINFLIP_LIMIT_MAX_CENTS = 10.0
 M5_RETRACE_PCT = 0.25  # M5 ≥0.25% likely retraces next 5m
 
 _ET = ZoneInfo("America/New_York")
@@ -98,6 +105,73 @@ def is_lottery_ticket(entry_cents: float) -> bool:
     return LOTTERY_MIN_CENTS <= float(entry_cents) <= LOTTERY_MAX_CENTS
 
 
+def in_lottery_bot_window(
+    expiry_ts: str | None,
+    *,
+    minutes: float = LOTTERY_BOT_WINDOW_MINUTES,
+    now: datetime | None = None,
+) -> bool:
+    """True in the last N minutes of the window (lottery experiment bot)."""
+    return in_last_minutes(expiry_ts, minutes=minutes, now=now)
+
+
+def is_coinflip_mid(side_mid_cents: float) -> bool:
+    return COINFLIP_MIN_CENTS <= float(side_mid_cents) <= COINFLIP_MAX_CENTS
+
+
+def prior_5m_swept_liquidity(
+    m5_bars: Sequence[dict[str, Any]],
+    *,
+    lookback: int = 4,
+) -> tuple[bool, str | None]:
+    """True if the prior closed M5 candle swept a recent swing high/low.
+
+    Uses bars[-2] as the prior closed candle when bars[-1] may still be forming.
+    """
+    bars = list(m5_bars or [])
+    if len(bars) < lookback + 2:
+        return False, None
+    prior = bars[-2]
+    window = bars[-(lookback + 2) : -2]
+    if not window:
+        return False, None
+    try:
+        prev_high = max(float(b["high"]) for b in window)
+        prev_low = min(float(b["low"]) for b in window)
+        hi = float(prior["high"])
+        lo = float(prior["low"])
+        close = float(prior["close"])
+    except (KeyError, TypeError, ValueError):
+        return False, None
+    # Swept liquidity above and closed back inside (wick).
+    if hi > prev_high and close < hi:
+        return True, "sweep_high"
+    if lo < prev_low and close > lo:
+        return True, "sweep_low"
+    return False, None
+
+
+def lottery_cancel_at_iso(expiry_ts: str | None) -> str | None:
+    """ISO timestamp for lottery cancel (~13:30 of a 15m window)."""
+    if not expiry_ts:
+        return None
+    now = datetime.now(timezone.utc)
+    exp_min = minutes_to_expiry(expiry_ts, now=now)
+    if exp_min is None:
+        return None
+    cancel_in_min = max(0.0, exp_min - float(LOTTERY_CANCEL_MINUTES_BEFORE_EXPIRY))
+    cancel_dt = now.timestamp() + cancel_in_min * 60.0
+    return datetime.fromtimestamp(cancel_dt, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def side_mid_cents(side: str, yes_mid: float) -> float:
+    if side.upper() == "YES":
+        return float(yes_mid)
+    return 100.0 - float(yes_mid)
+
+
 def htf_bias_from_context(ctx: MarketContext | None) -> str:
     if ctx is None:
         return "unknown"
@@ -112,13 +186,41 @@ def htf_bias_from_context(ctx: MarketContext | None) -> str:
 
 
 def htf_vetoes(side: str, htf_bias: str) -> bool:
-    """True if HTF clearly conflicts with proposed side."""
+    """True if HTF clearly conflicts with proposed side.
+
+    Soft-HTF policy: do NOT use as a hard fill killer. Prefer
+    ``alignment_tag`` + critic acknowledgment instead. Kept for tests /
+    shadow tagging only.
+    """
     s = side.upper()
     if htf_bias == "bull" and s == "NO":
         return True
     if htf_bias == "bear" and s == "YES":
         return True
     return False
+
+
+def soft_htf_tags(side: str | None, htf_bias: str) -> list[str]:
+    """Tags for ledger: htf_bull/bear/mixed + aligned_htf | counter_htf."""
+    from patterns.market_structure_state import alignment_tag
+
+    tags: list[str] = []
+    if htf_bias in ("bull", "bear", "mixed"):
+        tags.append(f"htf_{htf_bias}")
+    align = alignment_tag(side, htf_bias)
+    if align not in tags:
+        tags.append(align)
+    return tags
+
+
+def direction_to_side(direction: str) -> str | None:
+    """Map LTF bullish/bearish to Kalshi YES/NO."""
+    d = (direction or "").lower()
+    if d == "bullish":
+        return "YES"
+    if d == "bearish":
+        return "NO"
+    return None
 
 
 def short_horizon_trigger(

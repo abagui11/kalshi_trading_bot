@@ -11,6 +11,7 @@ import bot_config
 import charts
 import critic
 import kalshi_critic
+import kalshi_triggers
 import research
 import validate
 from models import Suggestion
@@ -39,15 +40,22 @@ Ignore multi-day hold planning and spot sizing.
 Do NOT invent mid-richness ¢ edges — the engine prices fair value separately.
 Do NOT recommend a trade whose rationale is a coin flip or a sub-0.05% required move.
 
+**Chart pack (required):** Compare H4 → H1 → M5 explicitly in rationale
+("On H4 …; on H1 …; on M15/M5 …"). Same H4 OB/BRKR boxes are projected across TFs —
+use that for structure-to-entry alignment. HTF bias is soft: counter-HTF is allowed only
+when you acknowledge the conflict. decision_charts must be ["H4","H1","M5"].
+
 **Rationale MUST name KalshiRules** (session + entry rule + block/execute + ICT) or return no_trade.
+Paragraph 1 MUST state HTF bias and whether YES/NO aligns or fades it.
 """
 
 _KALSHI_PREAMBLE = (
     "Kalshi 15m binary decision for {product_id}. "
     "Apply ICT H4/H1/M5 + Custom KalshiRules (sessions, never >55¢, ≤50¢ preferred with "
     "~3¢ favorable limit, never chase, last-3m block, M5≥0.25% retrace). "
+    "Compare charts timeframe-by-timeframe in rationale (On H4…; on H1…; on M5…). "
     "Return JSON with spot_buy/spot_sell/no_trade — engine maps long→YES, short→NO. "
-    "Cite only structures in programmatic context. "
+    "Cite only structures in programmatic context. Soft HTF: acknowledge counter-HTF fades. "
     "Rationale must explicitly reference KalshiRules that justify the action "
     "(or return no_trade)."
 )
@@ -235,11 +243,13 @@ def propose_ict_bias(
         return validate_kalshi_ict_suggestion(suggestion, mctx, soft=True)
 
     def _extra(llm_body: str, suggestion: Suggestion):
+        htf = kalshi_triggers.htf_bias_from_context(ctx)
         return kalshi_critic.check_kalshi_rationale(
             llm_body,
             suggestion,
             model_fair_yes_cents=model_fair_yes_cents,
             yes_mid_cents=yes_mid_cents,
+            htf_bias=htf,
         )
 
     suggestion = analyze.propose_trade(

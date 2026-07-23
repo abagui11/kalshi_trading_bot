@@ -3,12 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kalshi 15m Paper</title>
+  <title>Kalshi 15m Multi-Bot Paper</title>
   <link rel="stylesheet" href="/static/style.css">
   <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 1.5rem; max-width: 900px; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 1.5rem; max-width: 1100px; color: #1a1a1a; }
     h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.1rem; margin-top: 1.75rem; margin-bottom: 0.6rem; }
     .sub { color: #666; margin-bottom: 1.25rem; }
+    .bot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.85rem; margin-bottom: 1.5rem; }
+    .bot-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.9rem; background: #fafafa; text-decoration: none; color: inherit; display: block; }
+    .bot-card:hover { border-color: #999; }
+    .bot-card.active { border-color: #222; box-shadow: 0 0 0 1px #222; background: #fff; }
+    .bot-card .name { font-weight: 700; font-size: 0.95rem; margin-bottom: 0.5rem; }
+    .bot-card .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem 0.6rem; font-size: 0.82rem; }
+    .bot-card .label { color: #666; font-size: 0.7rem; }
+    .bot-card .value { font-weight: 600; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
     .stat { border: 1px solid #ddd; padding: 0.75rem; border-radius: 6px; }
     .stat .label { font-size: 0.75rem; color: #666; }
@@ -18,18 +27,89 @@
     th { color: #555; font-weight: 600; }
     .pos { color: #0a7; }
     .neg { color: #c33; }
+    .structure-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .structure-card { border: 1px solid #ddd; border-radius: 8px; padding: 0.9rem; background: #fafafa; }
+    .structure-card h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+    .bias { font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; }
+    .bias-bull { color: #0a7; }
+    .bias-bear { color: #c33; }
+    .bias-mixed, .bias-unknown { color: #888; }
+    .watching { margin: 0.5rem 0 0; padding-left: 1.1rem; font-size: 0.85rem; color: #444; }
+    .thesis { font-size: 0.85rem; color: #333; margin: 0.5rem 0; }
+    .chart-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+    .chart-row img { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; max-height: 180px; }
+    .tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .tabs a { padding: 0.4rem 0.85rem; border: 1px solid #ccc; border-radius: 6px; text-decoration: none; color: #333; font-size: 0.9rem; }
+    .tabs a.active { background: #222; color: #fff; border-color: #222; }
+    .filters { margin-bottom: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .filters a { padding: 0.25rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; text-decoration: none; color: #333; font-size: 0.85rem; }
+    .filters a.active { background: #222; color: #fff; border-color: #222; }
+    .badge { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.35rem; border-radius: 3px; background: #eee; margin-right: 0.2rem; margin-bottom: 0.2rem; }
+    .trade-card { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 0.6rem; overflow: hidden; }
+    .trade-card.skip { border-left: 3px solid #999; }
+    .trade-card.trade { border-left: 3px solid #0a7; }
+    .trade-summary { width: 100%; text-align: left; background: #fff; border: 0; padding: 0.7rem 0.85rem; cursor: pointer; display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; align-items: baseline; }
+    .trade-body { padding: 0.75rem 0.85rem 1rem; border-top: 1px solid #eee; background: #fcfcfc; }
+    .trade-body[hidden] { display: none; }
+    .rationale { white-space: pre-wrap; font-size: 0.88rem; line-height: 1.4; }
+    .meta { font-size: 0.8rem; color: #666; }
   </style>
 </head>
 <body>
-  <h1>Kalshi 15m paper</h1>
+  <h1>Kalshi 15m multi-bot paper</h1>
   <p class="sub">
     {{ status.env }} · paper_only={{ status.paper_only }} ·
-    {{ status.series | join(', ') }} · epoch {{ status.epoch }}
+    {{ status.series | join(', ') }} · epoch {{ status.epoch }} ·
+    bots={{ status.enabled_bots | join(', ') }} ·
+    watchdog={{ status.watchdog_enabled }}/exec={{ status.watchdog_execute }}
   </p>
+
+  <h2>Bot leaderboard</h2>
+  <div class="bot-grid">
+    {% for b in bots %}
+    <a class="bot-card {{ 'active' if b.bot_id == active_bot else '' }}" href="/?bot={{ b.bot_id }}&amp;filter={{ journal_filter }}">
+      <div class="name">{{ b.display_name }}</div>
+      <div class="metrics">
+        <div>
+          <div class="label">Equity</div>
+          <div class="value">${{ "%.2f"|format(b.equity_usd) }}</div>
+        </div>
+        <div>
+          <div class="label">Realized PnL</div>
+          <div class="value {{ 'pos' if b.realized_pnl_usd >= 0 else 'neg' }}">${{ "%+.2f"|format(b.realized_pnl_usd) }}</div>
+        </div>
+        <div>
+          <div class="label">Win rate</div>
+          <div class="value">{{ "%.0f"|format(b.win_rate * 100) }}%</div>
+        </div>
+        <div>
+          <div class="label">W / L</div>
+          <div class="value">{{ b.wins }}W / {{ b.losses }}L</div>
+        </div>
+        <div>
+          <div class="label">Open</div>
+          <div class="value">{{ b.open_count }} (${{ "%.2f"|format(b.open_cost_usd) }})</div>
+        </div>
+        <div>
+          <div class="label">Decisions</div>
+          <div class="value">{{ b.decision_count }}</div>
+        </div>
+      </div>
+    </a>
+    {% else %}
+    <p class="meta">No bot books yet — run a cycle.</p>
+    {% endfor %}
+  </div>
+
+  <div class="tabs">
+    {% for t in bot_tabs %}
+    <a href="/?bot={{ t.bot_id }}&amp;filter={{ journal_filter }}" class="{{ 'active' if t.bot_id == active_bot else '' }}">{{ t.display_name }}</a>
+    {% endfor %}
+  </div>
 
   <div class="grid">
     <div class="stat">
-      <div class="label">Equity</div>
+      <div class="label">{{ performance.display_name }} · Equity</div>
       <div class="value">${{ "%.2f"|format(performance.equity_usd) }}</div>
     </div>
     <div class="stat">
@@ -44,9 +124,56 @@
       <div class="label">Closed</div>
       <div class="value">{{ performance.wins }}W / {{ performance.losses }}L</div>
     </div>
+    <div class="stat">
+      <div class="label">Avg chart-read</div>
+      <div class="value">
+        {% if performance.avg_chart_read is not none %}
+        {{ "%.2f"|format(performance.avg_chart_read) }}
+        {% else %}—{% endif %}
+      </div>
+    </div>
   </div>
 
-  <h2>Open ({{ open_positions|length }})</h2>
+  <h2>Market structure</h2>
+  <div class="structure-grid">
+    {% for s in structure %}
+    <div class="structure-card">
+      <h3>{{ s.product_label }} · <span class="bias bias-{{ s.htf_bias }}">{{ s.htf_bias }}</span></h3>
+      <div class="meta">H1: {{ s.h1_bias }} · phase: {{ s.setup_phase }} · {{ s.updated_at or 'not yet refreshed' }}</div>
+      {% if s.range_24h_label %}<div class="meta">{{ s.range_24h_label }}</div>{% endif %}
+      {% if s.spot %}<div class="meta">Spot ${{ "%.2f"|format(s.spot) }}</div>{% endif %}
+      <p class="thesis">{{ s.window_thesis or 'Waiting for first M15 vision cycle to refresh HTF state.' }}</p>
+      {% if s.market_ticker %}<div class="meta">Window: {{ s.market_ticker }}</div>{% endif %}
+      {% if s.watching %}
+      <ul class="watching">
+        {% for w in s.watching %}
+        <li>{{ w }}</li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="meta">No zones on watching list yet.</p>
+      {% endif %}
+      <div class="chart-row">
+        {% if s.h4_chart_url %}
+        <figure>
+          <figcaption class="meta">H4 structure</figcaption>
+          <img src="{{ s.h4_chart_url }}" alt="H4 {{ s.product_label }}" loading="lazy">
+        </figure>
+        {% endif %}
+        {% if s.h1_chart_url %}
+        <figure>
+          <figcaption class="meta">H1</figcaption>
+          <img src="{{ s.h1_chart_url }}" alt="H1 {{ s.product_label }}" loading="lazy">
+        </figure>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <p class="meta">No structure state yet — run a vision cycle.</p>
+    {% endfor %}
+  </div>
+
+  <h2>Open ({{ open_positions|length }}) · {{ active_bot }}</h2>
   <table>
     <thead>
       <tr><th>Asset</th><th>Side</th><th>Qty</th><th>Entry</th><th>Market</th><th>Expiry</th></tr>
@@ -67,7 +194,59 @@
     </tbody>
   </table>
 
-  <h2>Closed (last {{ closed_positions|length }})</h2>
+  <h2>Decision journal · {{ active_bot }}</h2>
+  <div class="filters">
+    <a href="/?bot={{ active_bot }}&amp;filter=all" class="{{ 'active' if journal_filter == 'all' else '' }}">All</a>
+    <a href="/?bot={{ active_bot }}&amp;filter=trades" class="{{ 'active' if journal_filter == 'trades' else '' }}">Trades</a>
+    <a href="/?bot={{ active_bot }}&amp;filter=skips" class="{{ 'active' if journal_filter == 'skips' else '' }}">Skips only</a>
+  </div>
+  {% for d in journal %}
+  <div class="trade-card {{ 'trade' if d.is_trade else 'skip' }}">
+    <button type="button" class="trade-summary" aria-expanded="false" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden;this.setAttribute('aria-expanded', !this.nextElementSibling.hidden)">
+      <strong>{{ d.product_id }} {{ d.side }}</strong>
+      <span class="meta">{{ d.ts }}</span>
+      <span class="badge">{{ d.bot_id }}</span>
+      <span class="meta">{{ d.trigger_type or '' }}{% if d.trigger_name %} / {{ d.trigger_name }}{% endif %}</span>
+      {% if d.htf_bias %}<span class="badge">htf:{{ d.htf_bias }}</span>{% endif %}
+      {% for tag in (d.setup_tags or [])[:5] %}
+      <span class="badge">{{ tag }}</span>
+      {% endfor %}
+      {% if d.edge_cents is not none %}
+      <span class="meta">edge {{ "%+.1f"|format(d.edge_cents) }}¢</span>
+      {% endif %}
+    </button>
+    <div class="trade-body" hidden>
+      {% if d.skip_codes %}
+      <div class="meta">Skip codes: {{ d.skip_codes | join(', ') }}</div>
+      {% endif %}
+      <div class="rationale">{{ d.rationale }}</div>
+      <div class="chart-row">
+        {% if d.structure_chart_url %}
+        <figure>
+          <figcaption class="meta">Structure · H4</figcaption>
+          <img src="{{ d.structure_chart_url }}" alt="H4 structure" loading="lazy">
+        </figure>
+        {% endif %}
+        {% if d.entry_chart_url %}
+        <figure>
+          <figcaption class="meta">Entry / checkpoint</figcaption>
+          <img src="{{ d.entry_chart_url }}" alt="Entry chart" loading="lazy">
+        </figure>
+        {% endif %}
+      </div>
+      <div class="meta">
+        mid {{ d.yes_mid_cents }} · fair {{ d.fair_yes_cents }} ·
+        gate {{ d.gate_outcome or '—' }} ·
+        {% if d.chart_read_score is not none %}chart-read {{ "%.2f"|format(d.chart_read_score) }} ·{% endif %}
+        {{ d.market_ticker }}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="meta">No decisions logged yet for this bot.</p>
+  {% endfor %}
+
+  <h2>Closed (last {{ closed_positions|length }}) · {{ active_bot }}</h2>
   <table>
     <thead>
       <tr><th>Asset</th><th>Side</th><th>Qty</th><th>Entry</th><th>Result</th><th>PnL</th><th>Closed</th></tr>

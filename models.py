@@ -118,9 +118,21 @@ class KalshiSuggestion:
     critic_downgraded: bool = False
     would_skip_reasons: list[str] = field(default_factory=list)
     chart_path: str | None = None
+    structure_chart_path: str | None = None
+    entry_chart_path: str | None = None
+    setup_tags: list[str] = field(default_factory=list)
+    skip_codes: list[str] = field(default_factory=list)
+    chart_read_score: float | None = None
+    seconds_to_expiry: float | None = None
     cycle_id: str | None = None
     opened: bool = False
     position_id: int | None = None
+    trigger_name: str | None = None
+    bot_id: str = "control"
+    # When True, paper places a working limit (not immediate fill).
+    pending_limit: bool = False
+    cancel_at_ts: str | None = None
+    order_id: int | None = None
 
     @classmethod
     def skip(
@@ -185,4 +197,16 @@ class KalshiSuggestion:
             "opened": self.opened,
             "position_id": self.position_id,
             "chart_path": self.chart_path,
+            "structure_chart_path": self.structure_chart_path,
+            "entry_chart_path": self.entry_chart_path,
+            "setup_tags": list(self.setup_tags),
+            "skip_codes": list(self.skip_codes),
+            "chart_read_score": self.chart_read_score,
+            "seconds_to_expiry": self.seconds_to_expiry,
+            "trigger_name": self.trigger_name,
+            "h1_bias_tag": self.h1_bias_tag,
+            "bot_id": self.bot_id,
+            "pending_limit": self.pending_limit,
+            "cancel_at_ts": self.cancel_at_ts,
+            "order_id": self.order_id,
         }

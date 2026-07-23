@@ -18,7 +18,8 @@ PRODUCT_TO_COINBASE: dict[str, str] = {
 }
 
 # When True, Telegram only gets DMs on real paper trades (not skips).
-BROADCAST_ONLY_TRADES = True
+# Default False: operator always sees skip rationales (ICT port requirement).
+BROADCAST_ONLY_TRADES = False
 
 # Pre-broadcast audit refine loop (spot + Kalshi ICT rationale critic).
 MAX_REFINE_PASSES = 3
@@ -69,11 +70,12 @@ PRODUCT_OB_MIN_WIDTH_PCT: dict[str, float] = {
 
 PAPER_EPOCH_LABEL = "kalshi_15m_ict"
 
-# Watchdog left available but not scheduled by main.py for Kalshi.
-WATCHDOG_ENABLED = False
+# Kalshi LTF scanner between 15m marks (shadow until execute enabled).
+WATCHDOG_ENABLED = True
 WATCHDOG_INTERVAL_SEC = 60
 WATCHDOG_COOLDOWN_SEC = 30 * 60
-WATCHDOG_EXECUTE_ENABLED = False
+# Watchdog can paper-fill when triggers + edge gates pass.
+WATCHDOG_EXECUTE_ENABLED = True
 WATCHDOG_EXECUTE_META_KEY = "watchdog_execute_enabled"
 WATCHDOG_ALLOW_SHORTS = True
 SCALE_IN_MIN_R = 0.5
@@ -111,6 +113,31 @@ KALSHI_JOB_INTERVAL_SEC = 60
 KALSHI_DECISION_WINDOW_SEC = 90
 # Soft mid filter: skip lottery-ticket binaries even with ICT bias.
 KALSHI_EXTREME_MID_CENTS = 5.0
+
+# Multi-bot paper experiments (comma-separated bot_ids).
+ENABLED_BOTS: tuple[str, ...] = ("control", "lottery", "adverse")
+BOT_DISPLAY_NAMES: dict[str, str] = {
+    "control": "Control (vanilla ICT)",
+    "lottery": "Lottery / hail-mary",
+    "adverse": "Adverse / wick-hunt",
+}
+
+# Lottery bot: last N minutes; cancel unfilled limits this many minutes before expiry.
+LOTTERY_WINDOW_MINUTES = 5.0
+LOTTERY_CANCEL_MINUTES_BEFORE_EXPIRY = 1.5  # ~13:30 of a 15m window
+LOTTERY_COINFLIP_MIN_CENTS = 45.0
+LOTTERY_COINFLIP_MAX_CENTS = 55.0
+LOTTERY_COINFLIP_LIMIT_MIN_CENTS = 7.0
+LOTTERY_COINFLIP_LIMIT_MAX_CENTS = 10.0
+LOTTERY_MAX_CONTRACTS = 5
+LOTTERY_DEPLOY_PCT = 0.05
+
+# Adverse / wick-hunt: enter after move against shared bias.
+ADVERSE_MAX_ENTRY_CENTS = 40.0
+ADVERSE_MIN_EXCURSION_PCT = 0.05  # min |spot vs strike| adverse move to arm fill
+ADVERSE_MIN_MID_IMPROVEMENT_CENTS = 5.0  # side mid must cheapen vs arm mid
+# Stub for later: allow last-3m block exception on strong HTF + cheap underdog.
+STRONG_SIGNAL_OVERRIDE = False
 
 
 def qty_caps(product_id: str) -> tuple[float, float]:

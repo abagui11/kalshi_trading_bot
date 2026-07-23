@@ -22,11 +22,13 @@ def _connect() -> sqlite3.Connection:
 def export_trades(conn: sqlite3.Connection) -> int:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(paper_positions)").fetchall()}
     has_chart = "chart_path" in cols
+    has_bot = "bot_id" in cols
     chart_sel = "chart_path" if has_chart else "NULL AS chart_path"
+    bot_sel = "bot_id" if has_bot else "'control' AS bot_id"
     rows = conn.execute(
         f"""
         SELECT
-            id, opened_at, closed_at, series, market_ticker, product_id, side,
+            id, {bot_sel}, opened_at, closed_at, series, market_ticker, product_id, side,
             contracts, entry_cents, expiry_ts, status, result,
             payout_usd, pnl_usd, rationale, {chart_sel}
         FROM paper_positions
@@ -54,6 +56,7 @@ def export_trades(conn: sqlite3.Connection) -> int:
 
     fieldnames = [
         "id",
+        "bot_id",
         "opened_at",
         "closed_at",
         "series",
@@ -109,6 +112,7 @@ def export_trades(conn: sqlite3.Connection) -> int:
             w.writerow(
                 {
                     "id": r["id"],
+                    "bot_id": r["bot_id"] if "bot_id" in r.keys() else "control",
                     "opened_at": r["opened_at"],
                     "closed_at": r["closed_at"] or "",
                     "series": r["series"],

@@ -1,12 +1,13 @@
-"""Kalshi-specific rationale fact checks (coin-flip, mid-richness vs model fair)."""
+"""Kalshi-specific rationale fact checks (coin-flip, mid-richness, soft HTF ack)."""
 
 from __future__ import annotations
 
 import re
 from typing import Any
 
-from critic import AuditFinding
+from critic import AuditFinding, rationale_acknowledges_conflicts
 from models import Suggestion
+from patterns.market_structure_state import alignment_tag
 
 _COIN_FLIP_RE = re.compile(
     r"(?i)("
@@ -44,6 +45,7 @@ def check_kalshi_rationale(
     model_fair_yes_cents: float | None = None,
     yes_mid_cents: float | None = None,
     fair_tol_cents: float = 3.0,
+    htf_bias: str | None = None,
 ) -> list[AuditFinding]:
     """Deterministic Kalshi checks. Critical findings trigger critic retry/downgrade."""
     findings: list[AuditFinding] = []
@@ -75,6 +77,26 @@ def check_kalshi_rationale(
                 )
             )
 
+        # Soft HTF: counter-structure requires acknowledgment in rationale.
+        if htf_bias in ("bull", "bear"):
+            side = (
+                "YES"
+                if action in ("spot_buy", "deriv_buy")
+                else "NO"
+            )
+            if alignment_tag(side, htf_bias) == "counter_htf":
+                if not rationale_acknowledges_conflicts(body):
+                    findings.append(
+                        AuditFinding(
+                            code="KALSHI_COUNTER_HTF_UNACKNOWLEDGED",
+                            message=(
+                                f"Trade {side} fades HTF {htf_bias} without acknowledging "
+                                "the conflict (soft HTF policy)."
+                            ),
+                            severity="critical",
+                        )
+                    )
+
         # Noted settlement vs strike distinction but still traded without resolving it.
         if _SETTLE_DISTINCTION_RE.search(body) and re.search(
             r"(?i)traded\s+anyway|anyway\.|despite\s+that", body
@@ -85,6 +107,21 @@ def check_kalshi_rationale(
                     message=(
                         "Rationale notes settlement/window-average vs strike distinction "
                         "but does not reconcile it with the trade."
+                    ),
+                    severity="critical",
+                )
+            )
+
+        # Require explicit chart-to-chart language on trades.
+        if not re.search(r"(?i)\bon\s+h4\b", body) or not re.search(
+            r"(?i)\bon\s+(h1|m5|m15)\b", body
+        ):
+            findings.append(
+                AuditFinding(
+                    code="KALSHI_MISSING_CHART_COMPARE",
+                    message=(
+                        "Trade rationale must compare charts explicitly "
+                        "(On H4 …; on H1/M5 …)."
                     ),
                     severity="critical",
                 )
