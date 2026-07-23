@@ -33,7 +33,12 @@ class AdverseStrategy:
         htf = ctx.htf
         side = htf.side if htf else None
         if side is None and htf:
-            # Try reconstruct from stored shared bias / arm
+            # ICT may say no_trade while HTF bias is still clear — arm from HTF.
+            if htf.htf_bias == "bear":
+                side = "NO"
+            elif htf.htf_bias == "bull":
+                side = "YES"
+        if side is None:
             arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
             if arm and arm.get("armed_side") in ("YES", "NO"):
                 side = str(arm["armed_side"])
@@ -41,7 +46,10 @@ class AdverseStrategy:
             shared = paper.get_shared_htf_bias(ctx.market_ticker)
             if shared and shared.get("side") in ("YES", "NO"):
                 side = str(shared["side"])
-                # Reconstruct minimal htf for arming path
+            elif shared and shared.get("htf_bias") == "bear":
+                side = "NO"
+            elif shared and shared.get("htf_bias") == "bull":
+                side = "YES"
             elif ctx.near_decision:
                 return kalshi_finalize.make_skip(
                     rationale="adverse: no directional bias to arm wick-hunt",
