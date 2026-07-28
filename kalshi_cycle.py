@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +27,11 @@ from strategies.context import SharedCycleContext, SharedHtfBias
 from strategies.registry import any_needs_htf_bias, enabled_strategies
 
 logger = logging.getLogger(__name__)
+
+# Claude ICT+critic can take >60s per asset. Keep the APScheduler job slot free by
+# refreshing HTF on a background thread so settle/adverse ticks are not skipped.
+_htf_refresh_lock = threading.Lock()
+_htf_store_lock = threading.Lock()
 
 
 def _near_decision_time(now: datetime | None = None) -> bool:
@@ -440,9 +447,128 @@ def _compute_htf_bias(
         entry_chart_path=entry_path,
         side=side,
     )
-    paper.set_shared_htf_bias(ticker, payload)
-    paper.set_product_htf_bias(pid, payload)
+    with _htf_store_lock:
+        paper.set_shared_htf_bias(ticker, payload)
+        paper.set_product_htf_bias(pid, payload)
     return htf
+
+
+def _open_market_for_series(series: str) -> dict[str, Any] | None:
+    try:
+        markets = kalshi_client.get_open_markets(series)
+    except Exception:
+        logger.exception("Failed to list markets for %s", series)
+        return None
+    if not markets:
+        return None
+    return markets[0]
+
+
+def _htf_refresh_needed_for_open_markets() -> bool:
+    """True if any open series still needs a Claude HTF refresh under current mode."""
+    if not any_needs_htf_bias():
+        return False
+    for series in config.KALSHI_SERIES:
+        market = _open_market_for_series(series)
+        if not market:
+            continue
+        ticker = str(market.get("ticker") or "")
+        product_id = bot_config.series_product(series)
+        should, _reason = _should_refresh_htf(
+            ticker=ticker,
+            product_id=product_id,
+            spot=None,
+        )
+        if should:
+            return True
+    return False
+
+
+def _refresh_htf_for_series(series: str, market: dict[str, Any]) -> None:
+    build_shared_context(
+        series,
+        market,
+        near_decision=True,
+        force_htf=True,
+        allow_htf_refresh=True,
+    )
+
+
+def _htf_refresh_worker() -> None:
+    """Compute Claude HTF off the scheduler thread, then re-run strategies."""
+    logger.info("HTF background refresh starting")
+    pairs: list[tuple[str, dict[str, Any]]] = []
+    for series in config.KALSHI_SERIES:
+        market = _open_market_for_series(series)
+        if market is None:
+            continue
+        ticker = str(market.get("ticker") or "")
+        product_id = bot_config.series_product(series)
+        should, reason = _should_refresh_htf(
+            ticker=ticker, product_id=product_id, spot=None
+        )
+        logger.info(
+            "htf_bg_plan reason=%s ticker=%s product=%s",
+            reason,
+            ticker,
+            product_id,
+        )
+        if should:
+            pairs.append((series, market))
+
+    if not pairs:
+        logger.info("HTF background refresh: nothing to compute")
+        return
+
+    if len(pairs) == 1:
+        _refresh_htf_for_series(pairs[0][0], pairs[0][1])
+    else:
+        # Parallel BTC/ETH Claude calls — wall clock ~half of sequential.
+        with ThreadPoolExecutor(max_workers=len(pairs)) as pool:
+            futs = {
+                pool.submit(_refresh_htf_for_series, series, market): series
+                for series, market in pairs
+            }
+            for fut in as_completed(futs):
+                series = futs[fut]
+                try:
+                    fut.result()
+                except Exception:
+                    logger.exception("HTF background refresh failed for %s", series)
+
+    # Adverse can arm/fill off-offset once bias is stored; control only if still near.
+    near = _near_decision_time()
+    decided = run_strategy_cycle(
+        near_decision=near,
+        force_htf=False,
+        allow_htf_refresh=False,
+    )
+    logger.info(
+        "HTF background refresh done (near=%s decisions=%s)",
+        near,
+        len(decided),
+    )
+
+
+def ensure_htf_refresh_started() -> bool:
+    """Kick a daemon thread for Claude HTF if needed. Never blocks the caller."""
+    if not _htf_refresh_needed_for_open_markets():
+        return False
+    if not _htf_refresh_lock.acquire(blocking=False):
+        logger.info("HTF background refresh already running — light tick continues")
+        return False
+
+    def _run() -> None:
+        try:
+            _htf_refresh_worker()
+        except Exception:
+            logger.exception("HTF background refresh crashed")
+        finally:
+            _htf_refresh_lock.release()
+
+    threading.Thread(target=_run, name="htf-refresh", daemon=True).start()
+    logger.info("HTF background refresh kicked off")
+    return True
 
 
 def build_shared_context(
@@ -451,6 +577,7 @@ def build_shared_context(
     *,
     near_decision: bool,
     force_htf: bool = False,
+    allow_htf_refresh: bool = True,
 ) -> SharedCycleContext:
     product_id = bot_config.series_product(series)
     coinbase = bot_config.PRODUCT_TO_COINBASE.get(product_id, f"{product_id}-USD")
@@ -503,26 +630,37 @@ def build_shared_context(
             product_id=product_id,
             spot=float(spot) if spot is not None else None,
         )
-        logger.info(
-            "htf_refresh_reason=%s ticker=%s product=%s mode=%s",
-            reason,
-            ticker,
-            product_id,
-            bot_config.HTF_REFRESH_MODE,
-        )
-        if should:
-            htf = _compute_htf_bias(
-                coinbase,
+        if should and not allow_htf_refresh:
+            logger.info(
+                "htf_refresh_reason=deferred ticker=%s product=%s mode=%s "
+                "(would have been %s)",
                 ticker,
-                cycle_id,
-                float(mid),
-                fair_cents,
-                product_id=product_id,
-                spot=float(spot) if spot is not None else None,
-                strike=float(strike) if strike is not None else None,
+                product_id,
+                bot_config.HTF_REFRESH_MODE,
+                reason,
             )
-        else:
             htf = _load_htf_reuse(ticker, product_id, mirror_to_ticker=True)
+        else:
+            logger.info(
+                "htf_refresh_reason=%s ticker=%s product=%s mode=%s",
+                reason,
+                ticker,
+                product_id,
+                bot_config.HTF_REFRESH_MODE,
+            )
+            if should:
+                htf = _compute_htf_bias(
+                    coinbase,
+                    ticker,
+                    cycle_id,
+                    float(mid),
+                    fair_cents,
+                    product_id=product_id,
+                    spot=float(spot) if spot is not None else None,
+                    strike=float(strike) if strike is not None else None,
+                )
+            else:
+                htf = _load_htf_reuse(ticker, product_id, mirror_to_ticker=True)
     elif need_htf:
         htf = _load_htf_reuse(ticker, product_id, mirror_to_ticker=False)
 
@@ -844,6 +982,7 @@ def run_strategy_cycle(
     *,
     near_decision: bool,
     force_htf: bool = False,
+    allow_htf_refresh: bool = True,
 ) -> list[KalshiSuggestion]:
     """Build shared context per series and fan out to all enabled strategies."""
     results: list[KalshiSuggestion] = []
@@ -881,6 +1020,7 @@ def run_strategy_cycle(
             market,
             near_decision=near_decision,
             force_htf=force_htf,
+            allow_htf_refresh=allow_htf_refresh,
         )
         if ctx.yes_mid_cents is not None:
             yes_mids[ctx.market_ticker] = float(ctx.yes_mid_cents)
@@ -909,24 +1049,44 @@ def run_strategy_cycle(
 
 def run_decision_cycle() -> list[KalshiSuggestion]:
     """Near-offset vision cycle: refresh HTF and run all strategies."""
-    return run_strategy_cycle(near_decision=True, force_htf=True)
+    return run_strategy_cycle(
+        near_decision=True, force_htf=True, allow_htf_refresh=True
+    )
 
 
 def run_once(*, force_decision: bool = False) -> dict[str, Any]:
-    """One job tick: settle, process limits, run strategies as needed."""
+    """One job tick: settle, process limits, run strategies as needed.
+
+    Scheduled ticks keep Claude off the critical path: HTF refresh runs in a
+    background thread so APScheduler does not skip the next 60s settle/adverse
+    tick with \"maximum number of running instances reached\".
+    """
     paper.init_db()
     settled = settle_due()
     near = force_decision or _near_decision_time()
 
-    # Always run non-vision strategies (lottery last-5m, adverse wick wait).
-    # Control only acts when near_decision=True.
-    decided = run_strategy_cycle(near_decision=near, force_htf=near)
-    if not near:
-        logger.info(
-            "Off-offset tick — lottery/adverse only (%s decisions, %s settled)",
-            len(decided),
-            len(settled),
+    if force_decision:
+        # Explicit CLI / force path: block until Claude finishes.
+        decided = run_strategy_cycle(
+            near_decision=True,
+            force_htf=True,
+            allow_htf_refresh=True,
         )
+    else:
+        if near:
+            ensure_htf_refresh_started()
+        # Light path only — reuse stored HTF; never hold the job on vision.
+        decided = run_strategy_cycle(
+            near_decision=near,
+            force_htf=False,
+            allow_htf_refresh=False,
+        )
+        if not near:
+            logger.info(
+                "Off-offset tick — lottery/adverse only (%s decisions, %s settled)",
+                len(decided),
+                len(settled),
+            )
 
     return {
         "settled": settled,

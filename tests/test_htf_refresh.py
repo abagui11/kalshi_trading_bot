@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -260,6 +261,88 @@ class HtfBuildContextCallCountTests(unittest.TestCase):
                                 force_htf=True,
                             )
         self.assertEqual(compute.call_count, 0)
+
+
+    def test_deferred_refresh_does_not_call_claude(self) -> None:
+        compute = MagicMock(return_value=_fake_htf())
+        with patch.object(bot_config, "HTF_REFRESH_MODE", "once_per_window"):
+            with patch.object(bot_config, "ENABLED_BOTS", ("adverse",)):
+                with patch.object(
+                    kalshi_cycle, "any_needs_htf_bias", return_value=True
+                ):
+                    with patch.object(
+                        kalshi_cycle, "_compute_htf_bias", compute
+                    ):
+                        with patch.object(
+                            kalshi_cycle,
+                            "_build_features",
+                            return_value={
+                                "spot": 100.0,
+                                "strike": 100.0,
+                                "sigma": 0.5,
+                                "tau_sec": 300.0,
+                                "spot_vs_strike_pct": 0.0,
+                                "prior_5m_ret": 0.0,
+                                "prior_15m_ret": 0.0,
+                                "prior_1h_ret": 0.0,
+                                "m5_bars": [],
+                                "fair": None,
+                                "cycle_id": "T",
+                            },
+                        ):
+                            with patch(
+                                "kalshi_client.mid_cents_from_market",
+                                return_value=50.0,
+                            ):
+                                kalshi_cycle.build_shared_context(
+                                    "KXBTC15M",
+                                    self._market(),
+                                    near_decision=True,
+                                    force_htf=True,
+                                    allow_htf_refresh=False,
+                                )
+        self.assertEqual(compute.call_count, 0)
+
+    def test_ensure_htf_refresh_starts_background_once(self) -> None:
+        import time
+
+        started_evt = threading.Event()
+        release_evt = threading.Event()
+        calls: list[str] = []
+
+        def fake_needed() -> bool:
+            return True
+
+        def fake_worker() -> None:
+            calls.append("ran")
+            started_evt.set()
+            release_evt.wait(timeout=2.0)
+
+        # Drain lock if a prior test left it held (should not happen).
+        if kalshi_cycle._htf_refresh_lock.locked():
+            try:
+                kalshi_cycle._htf_refresh_lock.release()
+            except RuntimeError:
+                pass
+
+        with patch.object(
+            kalshi_cycle, "_htf_refresh_needed_for_open_markets", fake_needed
+        ):
+            with patch.object(kalshi_cycle, "_htf_refresh_worker", fake_worker):
+                started = kalshi_cycle.ensure_htf_refresh_started()
+                self.assertTrue(started)
+                self.assertTrue(started_evt.wait(timeout=1.0))
+                # Second kick while first holds lock should no-op.
+                started2 = kalshi_cycle.ensure_htf_refresh_started()
+                self.assertFalse(started2)
+                release_evt.set()
+                for _ in range(50):
+                    if not kalshi_cycle._htf_refresh_lock.locked():
+                        break
+                    time.sleep(0.02)
+                self.assertEqual(calls, ["ran"])
+                self.assertTrue(kalshi_cycle._htf_refresh_lock.acquire(blocking=False))
+                kalshi_cycle._htf_refresh_lock.release()
 
 
 if __name__ == "__main__":

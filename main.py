@@ -56,11 +56,18 @@ def main() -> None:
         raise RuntimeError("JobQueue unavailable — install python-telegram-bot[job-queue]")
 
     interval = max(30, int(bot_config.KALSHI_JOB_INTERVAL_SEC))
+    # coalesce+misfire: if a tick is delayed, run once — do not stack. HTF Claude
+    # work is backgrounded inside run_once so this job should stay < interval.
     app.job_queue.run_repeating(
         kalshi_job,
         interval=interval,
         first=5,
         name="kalshi_cycle",
+        job_kwargs={
+            "max_instances": 1,
+            "coalesce": True,
+            "misfire_grace_time": max(30, interval),
+        },
     )
     wd_interval = max(60, min(300, int(bot_config.WATCHDOG_INTERVAL_SEC)))
     if bot_config.WATCHDOG_ENABLED:
