@@ -1,16 +1,18 @@
 # Kalshi 15m paper bot — project state
 
-Updated: 2026-07-22
+Updated: 2026-07-28
 
 ## What this is
 
 Local Windows bot that papers Kalshi **KXBTC15M** / **KXETH15M** 15-minute up/down markets.
 
-- Claude picks YES/NO from Coinbase M5 candles + Kalshi YES mid.
-- Trades only when edge vs mid ≥ `KALSHI_MIN_EDGE_CENTS`.
+- Shared ICT/HTF Claude bias (gated refresh) + strategy plugins; default **adverse-only**.
+- Trades only when strategy + edge gates pass.
 - Paper fill at mid; settle from Kalshi `result` (YES→$1 / NO→$0 per contract).
 - Telegram: trade + why only; `/stats` and `/positions`.
 - Dashboard: equity + open/closed paper trades on `DASHBOARD_PORT` (default 8081).
+
+**Adverse-sensitive deploys:** see [`ADVERSE_CHANGELOG.md`](ADVERSE_CHANGELOG.md).
 
 ## Run locally
 
@@ -37,7 +39,7 @@ python -c "from kalshi_cycle import run_once; import json; print(json.dumps(run_
 | File | Role |
 |------|------|
 | `kalshi_client.py` | RSA-PSS auth, markets, mid, result, paper-only order stub |
-| `kalshi_cycle.py` | settle + decision cycle |
+| `kalshi_cycle.py` | settle + decision cycle + HTF refresh gate |
 | `paper.py` | binary SQLite paper book |
 | `bot.py` / `main.py` | Telegram + 60s job |
 | `notify.py` | trade+why DM |
@@ -47,3 +49,4 @@ python -c "from kalshi_cycle import run_once; import json; print(json.dumps(run_
 - `KALSHI_PAPER_ONLY=true` until Gate 3 paper soak passes.
 - Secrets live in `secrets/` and `.env` (gitignored).
 - Do not reuse the spot bot Telegram token or `ledger.db`.
+- Default `ENABLED_BOTS=adverse`, `HTF_REFRESH_MODE=once_per_window` (see `.env.example`).

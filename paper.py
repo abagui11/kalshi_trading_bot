@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 
 import config
 from models import KalshiSuggestion
@@ -15,13 +17,57 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BOT_ID = "control"
 
+# Replay overrides (backtest). None → live ledger / wall clock.
+_DB_PATH_OVERRIDE: Path | None = None
+_NOW_OVERRIDE: datetime | None = None
+
+
+def set_db_path(path: Path | str | None) -> None:
+    """Point paper ledger at an alternate SQLite file (or reset to config.LEDGER_DB)."""
+    global _DB_PATH_OVERRIDE
+    _DB_PATH_OVERRIDE = Path(path) if path is not None else None
+
+
+def set_now(now: datetime | None) -> None:
+    """Override paper timestamps for replay (UTC)."""
+    global _NOW_OVERRIDE
+    _NOW_OVERRIDE = now
+
+
+@contextmanager
+def use_db(path: Path | str) -> Iterator[Path]:
+    """Temporarily use an isolated ledger DB (for backtests)."""
+    prev = _DB_PATH_OVERRIDE
+    set_db_path(path)
+    try:
+        yield Path(path)
+    finally:
+        set_db_path(prev)
+
+
+@contextmanager
+def use_now(now: datetime) -> Iterator[datetime]:
+    prev = _NOW_OVERRIDE
+    set_now(now)
+    try:
+        yield now
+    finally:
+        set_now(prev)
+
+
+def _ledger_path() -> Path:
+    return _DB_PATH_OVERRIDE if _DB_PATH_OVERRIDE is not None else Path(config.LEDGER_DB)
+
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = _NOW_OVERRIDE or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(config.LEDGER_DB)
+    conn = sqlite3.connect(str(_ledger_path()))
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -536,6 +582,37 @@ def place_limit_order(
             "SELECT * FROM paper_orders WHERE id = ?", (oid,)
         ).fetchone()
         return dict(row) if row else None
+
+
+def cancel_pending_for_market(
+    market_ticker: str,
+    *,
+    bot_id: str | None = None,
+) -> int:
+    """Cancel working limits for a ticker (e.g. at window expiry in backtest)."""
+    init_db()
+    now = _now()
+    with _connect() as conn:
+        if bot_id:
+            cur = conn.execute(
+                """
+                UPDATE paper_orders
+                SET status = 'cancelled', cancelled_at = ?
+                WHERE market_ticker = ? AND bot_id = ? AND status = 'pending'
+                """,
+                (now, market_ticker, bot_id),
+            )
+        else:
+            cur = conn.execute(
+                """
+                UPDATE paper_orders
+                SET status = 'cancelled', cancelled_at = ?
+                WHERE market_ticker = ? AND status = 'pending'
+                """,
+                (now, market_ticker),
+            )
+        conn.commit()
+        return int(cur.rowcount or 0)
 
 
 def process_pending_orders(
@@ -1155,3 +1232,20 @@ def get_shared_htf_bias(market_ticker: str) -> dict[str, Any] | None:
     except (TypeError, json.JSONDecodeError):
         meta = {}
     return meta or dict(row)
+
+
+def product_htf_key(product_id: str) -> str:
+    """Stable bot_window_state key for product-level HTF bias (cross-ticker)."""
+    pid = str(product_id or "").strip().upper()
+    if pid.endswith("-USD"):
+        pid = pid[: -len("-USD")]
+    return f"PRODUCT:{pid or 'UNKNOWN'}"
+
+
+def set_product_htf_bias(product_id: str, payload: dict[str, Any]) -> None:
+    """Store shared HTF bias for a product (survives 15m ticker rollover)."""
+    set_shared_htf_bias(product_htf_key(product_id), payload)
+
+
+def get_product_htf_bias(product_id: str) -> dict[str, Any] | None:
+    return get_shared_htf_bias(product_htf_key(product_id))

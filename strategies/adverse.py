@@ -25,7 +25,7 @@ class AdverseStrategy:
             return None
 
         # Last-3m block (strong-signal override stubbed off).
-        if kalshi_triggers.in_last_minutes(ctx.expiry_ts):
+        if kalshi_triggers.in_last_minutes(ctx.expiry_ts, now=ctx.clock()):
             if not bot_config.STRONG_SIGNAL_OVERRIDE:
                 # Still allow if already armed and cheap enough? Plan says respect block.
                 return None

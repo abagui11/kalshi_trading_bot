@@ -151,11 +151,15 @@ def prior_5m_swept_liquidity(
     return False, None
 
 
-def lottery_cancel_at_iso(expiry_ts: str | None) -> str | None:
+def lottery_cancel_at_iso(
+    expiry_ts: str | None,
+    *,
+    now: datetime | None = None,
+) -> str | None:
     """ISO timestamp for lottery cancel (~13:30 of a 15m window)."""
     if not expiry_ts:
         return None
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     exp_min = minutes_to_expiry(expiry_ts, now=now)
     if exp_min is None:
         return None

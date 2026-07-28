@@ -68,6 +68,18 @@ def settle_due() -> list[dict[str, Any]]:
                 float(closed.get("pnl_usd") or 0),
             )
             try:
+                from backtest.record_live import maybe_record_result
+
+                maybe_record_result(
+                    series=str(closed.get("series") or pos.get("series") or ""),
+                    market_ticker=ticker,
+                    product_id=str(closed.get("product_id") or pos.get("product_id") or "")
+                    or None,
+                    result=str(result),
+                )
+            except Exception:
+                logger.exception("Result archive record failed for %s", ticker)
+            try:
                 notify.broadcast_settle(closed)
             except Exception:
                 logger.exception("Settle notify failed for %s", ticker)
@@ -222,8 +234,7 @@ def _chart_read_score(refine: Any) -> float | None:
     return max(0.0, 1.0 - 0.35 * critical - 0.1 * soft)
 
 
-def _load_htf_from_store(ticker: str) -> SharedHtfBias | None:
-    payload = paper.get_shared_htf_bias(ticker)
+def _load_htf_from_payload(payload: dict[str, Any] | None) -> SharedHtfBias | None:
     if not payload:
         return None
     side = payload.get("side")
@@ -248,12 +259,113 @@ def _load_htf_from_store(ticker: str) -> SharedHtfBias | None:
     )
 
 
+def _load_htf_from_store(ticker: str) -> SharedHtfBias | None:
+    return _load_htf_from_payload(paper.get_shared_htf_bias(ticker))
+
+
+def _load_htf_reuse(
+    ticker: str,
+    product_id: str,
+    *,
+    mirror_to_ticker: bool = False,
+) -> SharedHtfBias | None:
+    """Prefer per-ticker bias; fall back to product-level store."""
+    payload = paper.get_shared_htf_bias(ticker)
+    if payload:
+        return _load_htf_from_payload(payload)
+    product_payload = paper.get_product_htf_bias(product_id)
+    if not product_payload:
+        return None
+    if mirror_to_ticker and ticker:
+        paper.set_shared_htf_bias(ticker, dict(product_payload))
+    return _load_htf_from_payload(product_payload)
+
+
+def _parse_iso_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _h1_closed_since(refreshed_at: datetime, now: datetime) -> bool:
+    """True if at least one H1 bar has closed after refreshed_at."""
+    last_h1_close = now.astimezone(timezone.utc).replace(
+        minute=0, second=0, microsecond=0
+    )
+    return refreshed_at < last_h1_close
+
+
+def _should_refresh_htf(
+    *,
+    ticker: str,
+    product_id: str,
+    spot: float | None,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Decide whether to call Claude for ICT bias. Never per-bot bypass."""
+    mode = str(getattr(bot_config, "HTF_REFRESH_MODE", "once_per_window") or "").lower()
+    now = now or datetime.now(timezone.utc)
+
+    if mode == "every_near_tick":
+        return True, "forced"
+
+    if mode == "once_per_window":
+        if paper.get_shared_htf_bias(ticker):
+            return False, "reuse"
+        return True, "window_first"
+
+    if mode == "ttl_event":
+        payload = paper.get_product_htf_bias(product_id)
+        if not payload:
+            if paper.get_shared_htf_bias(ticker):
+                return False, "reuse"
+            return True, "window_first"
+
+        refreshed = _parse_iso_ts(payload.get("refreshed_at"))
+        ttl = max(0, int(getattr(bot_config, "HTF_BIAS_TTL_SEC", 3600) or 3600))
+        if refreshed is None:
+            return True, "ttl"
+        age_sec = (now - refreshed.astimezone(timezone.utc)).total_seconds()
+        if age_sec >= ttl:
+            return True, "ttl"
+
+        move_pct = float(getattr(bot_config, "HTF_M5_MOVE_PCT", 0.20) or 0.20)
+        spot_at = payload.get("spot_at_refresh")
+        if (
+            spot is not None
+            and spot_at is not None
+            and float(spot_at) > 0
+            and move_pct > 0
+        ):
+            moved = abs(float(spot) / float(spot_at) - 1.0) * 100.0
+            if moved >= move_pct:
+                return True, "m5_move"
+
+        if bool(getattr(bot_config, "HTF_REFRESH_ON_H1_CLOSE", True)):
+            if _h1_closed_since(refreshed.astimezone(timezone.utc), now):
+                return True, "h1_close"
+
+        return False, "reuse"
+
+    logger.warning("Unknown HTF_REFRESH_MODE=%r — using once_per_window", mode)
+    if paper.get_shared_htf_bias(ticker):
+        return False, "reuse"
+    return True, "window_first"
+
+
 def _compute_htf_bias(
     coinbase: str,
     ticker: str,
     cycle_id: str,
     mid: float,
     fair_cents: float | None,
+    *,
+    product_id: str | None = None,
+    spot: float | None = None,
+    strike: float | None = None,
 ) -> SharedHtfBias | None:
     try:
         ict, snapshot, refine = kalshi_ict.propose_ict_bias(
@@ -298,6 +410,41 @@ def _compute_htf_bias(
     entry_path = marked.get("M5") or marked.get("H1") or structure_state.entry_chart_path
     side = None if critic_downgraded else kalshi_ict.ict_action_to_side(ict.action)
 
+    if spot is None and ctx is not None and getattr(ctx, "spot", None) is not None:
+        try:
+            spot = float(ctx.spot)
+        except (TypeError, ValueError):
+            spot = None
+
+    refreshed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    pid = product_id or (coinbase.split("-")[0] if coinbase else "UNKNOWN")
+
+    payload = {
+        "side": side,
+        "yes_mid": mid,
+        "spot": spot,
+        "strike": strike,
+        "spot_at_refresh": spot,
+        "refreshed_at": refreshed_at,
+        "source_ticker": ticker,
+        "cycle_id": cycle_id,
+        "product_id": pid,
+        "ict_action": ict.action,
+        "ict_bias": bias,
+        "ict_rationale": ict_rationale,
+        "gate_outcome": gate_outcome,
+        "htf_bias": htf_bias,
+        "setup_tags": setup_tags,
+        "critic_downgraded": critic_downgraded,
+        "critic_passes": critic_passes,
+        "critic_findings": critic_findings,
+        "chart_read_score": chart_score,
+        "ob_low": ob_low,
+        "ob_high": ob_high,
+        "structure_chart_path": struct_path,
+        "entry_chart_path": entry_path,
+    }
+
     htf = SharedHtfBias(
         ict_action=ict.action,
         ict_bias=bias,
@@ -315,29 +462,8 @@ def _compute_htf_bias(
         entry_chart_path=entry_path,
         side=side,
     )
-    paper.set_shared_htf_bias(
-        ticker,
-        {
-            "side": side,
-            "yes_mid": mid,
-            "spot": None,
-            "strike": None,
-            "ict_action": ict.action,
-            "ict_bias": bias,
-            "ict_rationale": ict_rationale,
-            "gate_outcome": gate_outcome,
-            "htf_bias": htf_bias,
-            "setup_tags": setup_tags,
-            "critic_downgraded": critic_downgraded,
-            "critic_passes": critic_passes,
-            "critic_findings": critic_findings,
-            "chart_read_score": chart_score,
-            "ob_low": ob_low,
-            "ob_high": ob_high,
-            "structure_chart_path": struct_path,
-            "entry_chart_path": entry_path,
-        },
-    )
+    paper.set_shared_htf_bias(ticker, payload)
+    paper.set_product_htf_bias(pid, payload)
     return htf
 
 
@@ -384,12 +510,45 @@ def build_shared_context(
 
     htf: SharedHtfBias | None = None
     need_htf = any_needs_htf_bias()
-    if need_htf and mid is not None and (near_decision or force_htf):
-        htf = _compute_htf_bias(coinbase, ticker, cycle_id, float(mid), fair_cents)
+    spot = features.get("spot")
+    strike = features.get("strike")
+    if not need_htf:
+        if near_decision or force_htf:
+            logger.info(
+                "htf_refresh_reason=skipped_no_consumer ticker=%s product=%s",
+                ticker,
+                product_id,
+            )
+    elif mid is not None and (near_decision or force_htf):
+        should, reason = _should_refresh_htf(
+            ticker=ticker,
+            product_id=product_id,
+            spot=float(spot) if spot is not None else None,
+        )
+        logger.info(
+            "htf_refresh_reason=%s ticker=%s product=%s mode=%s",
+            reason,
+            ticker,
+            product_id,
+            bot_config.HTF_REFRESH_MODE,
+        )
+        if should:
+            htf = _compute_htf_bias(
+                coinbase,
+                ticker,
+                cycle_id,
+                float(mid),
+                fair_cents,
+                product_id=product_id,
+                spot=float(spot) if spot is not None else None,
+                strike=float(strike) if strike is not None else None,
+            )
+        else:
+            htf = _load_htf_reuse(ticker, product_id, mirror_to_ticker=True)
     elif need_htf:
-        htf = _load_htf_from_store(ticker)
+        htf = _load_htf_reuse(ticker, product_id, mirror_to_ticker=False)
 
-    return SharedCycleContext(
+    ctx = SharedCycleContext(
         series=series,
         market=market,
         market_ticker=ticker,
@@ -413,6 +572,13 @@ def build_shared_context(
         near_decision=near_decision,
         base_kwargs=base,
     )
+    try:
+        from backtest.record_live import maybe_record_from_context
+
+        maybe_record_from_context(ctx)
+    except Exception:
+        logger.exception("Snapshot archive record failed for %s", ticker)
+    return ctx
 
 
 def _decide_for_market(series: str, market: dict[str, Any]) -> KalshiSuggestion:

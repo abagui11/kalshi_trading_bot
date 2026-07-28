@@ -37,6 +37,7 @@ class LotteryStrategy:
         if not kalshi_triggers.in_lottery_bot_window(
             ctx.expiry_ts,
             minutes=float(bot_config.LOTTERY_WINDOW_MINUTES),
+            now=ctx.clock(),
         ):
             return None
 
@@ -46,13 +47,17 @@ class LotteryStrategy:
             return None
 
         # Past cancel deadline — do not place new lottery tickets.
-        minutes_left = kalshi_triggers.minutes_to_expiry(ctx.expiry_ts)
+        minutes_left = kalshi_triggers.minutes_to_expiry(
+            ctx.expiry_ts, now=ctx.clock()
+        )
         if minutes_left is not None and minutes_left <= float(
             bot_config.LOTTERY_CANCEL_MINUTES_BEFORE_EXPIRY
         ):
             return None
 
-        cancel_at = kalshi_triggers.lottery_cancel_at_iso(ctx.expiry_ts)
+        cancel_at = kalshi_triggers.lottery_cancel_at_iso(
+            ctx.expiry_ts, now=ctx.clock()
+        )
         swept, sweep_dir = kalshi_triggers.prior_5m_swept_liquidity(ctx.m5_bars)
 
         # --- Hail Mary: cheap side 5–10¢ after liquidity sweep ---

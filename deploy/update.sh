@@ -28,7 +28,13 @@ sudo -u "$APP_USER" bash -c "cd '$APP_DIR' && '$PY' -c \"import audit, ledger, p
 
 systemctl restart eth-agent
 systemctl restart eth-dashboard
+
 echo "Updated and restarted eth-agent + eth-dashboard."
+if [[ -f "$APP_DIR/deploy/ADVERSE_CHANGELOG.md" ]]; then
+  echo "==> Latest ADVERSE_CHANGELOG entry"
+  # Print from first ## heading through the next ## (or EOF), capped.
+  awk '/^## /{c++; if(c>1) exit} c{print}' "$APP_DIR/deploy/ADVERSE_CHANGELOG.md" | head -n 40
+fi
 echo "  journalctl -u eth-agent -f"
 echo "  journalctl -u eth-dashboard -f"
 echo "  Dashboard: http://$(hostname -I | awk '{print $1}'):8080"

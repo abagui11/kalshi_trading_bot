@@ -114,13 +114,24 @@ KALSHI_DECISION_WINDOW_SEC = 90
 # Soft mid filter: skip lottery-ticket binaries even with ICT bias.
 KALSHI_EXTREME_MID_CENTS = 5.0
 
-# Multi-bot paper experiments (comma-separated bot_ids).
-ENABLED_BOTS: tuple[str, ...] = ("control", "lottery", "adverse")
+# When set, live cycle appends mid/spot snapshots for backtest fidelity.
+# Example: "kalshi_snapshots.db" (relative to repo root) or absolute path.
+KALSHI_SNAPSHOT_DB: str | None = None
+
+# Multi-bot paper experiments (comma-separated bot_ids via ENABLED_BOTS env).
+# Default adverse-only so control/lottery cannot keep Claude HTF warm.
+ENABLED_BOTS: tuple[str, ...] = tuple(config.ENABLED_BOTS)
 BOT_DISPLAY_NAMES: dict[str, str] = {
     "control": "Control (vanilla ICT)",
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
 }
+
+# Shared ICT/HTF Claude refresh (aliases to config).
+HTF_REFRESH_MODE: str = config.HTF_REFRESH_MODE
+HTF_BIAS_TTL_SEC: int = config.HTF_BIAS_TTL_SEC
+HTF_M5_MOVE_PCT: float = config.HTF_M5_MOVE_PCT
+HTF_REFRESH_ON_H1_CLOSE: bool = config.HTF_REFRESH_ON_H1_CLOSE
 
 # Lottery bot: last N minutes; cancel unfilled limits this many minutes before expiry.
 LOTTERY_WINDOW_MINUTES = 5.0

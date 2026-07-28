@@ -110,3 +110,20 @@ KALSHI_BANKROLL_USD: float = float(os.getenv("KALSHI_BANKROLL_USD", "77") or "77
 KALSHI_DEPLOY_PCT: float = float(os.getenv("KALSHI_DEPLOY_PCT", "0.05") or "0.05")
 # When live, prefer Kalshi account balance for bankroll; fall back to KALSHI_BANKROLL_USD.
 KALSHI_USE_LIVE_BALANCE: bool = _optional_bool("KALSHI_USE_LIVE_BALANCE", default=True)
+
+# Multi-bot enable list. Default adverse-only (control/lottery are cost/experiments).
+_bots_raw = _optional("ENABLED_BOTS") or "adverse"
+ENABLED_BOTS: tuple[str, ...] = tuple(
+    s.strip() for s in _bots_raw.split(",") if s.strip()
+) or ("adverse",)
+
+# Shared ICT/HTF Claude refresh policy (see kalshi_cycle._should_refresh_htf).
+# every_near_tick | once_per_window | ttl_event
+HTF_REFRESH_MODE: str = (
+    (_optional("HTF_REFRESH_MODE") or "once_per_window").strip().lower()
+)
+HTF_BIAS_TTL_SEC: int = int(os.getenv("HTF_BIAS_TTL_SEC", "3600") or "3600")
+HTF_M5_MOVE_PCT: float = float(os.getenv("HTF_M5_MOVE_PCT", "0.20") or "0.20")
+HTF_REFRESH_ON_H1_CLOSE: bool = _optional_bool(
+    "HTF_REFRESH_ON_H1_CLOSE", default=True
+)

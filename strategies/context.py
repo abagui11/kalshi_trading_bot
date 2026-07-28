@@ -53,9 +53,19 @@ class SharedCycleContext:
     htf: SharedHtfBias | None = None
     near_decision: bool = False
     base_kwargs: dict[str, Any] = field(default_factory=dict)
+    # Replay clock (UTC). None → strategies use wall clock (live).
+    now: Any = None
 
     def with_bot(self, bot_id: str) -> dict[str, Any]:
         """Base kwargs for KalshiSuggestion / finalize, tagged with bot_id."""
         out = dict(self.base_kwargs)
         out["bot_id"] = bot_id
         return out
+
+    def clock(self) -> Any:
+        """Effective datetime for window checks."""
+        from datetime import datetime, timezone
+
+        if self.now is not None:
+            return self.now
+        return datetime.now(timezone.utc)
