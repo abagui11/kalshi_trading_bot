@@ -29,22 +29,9 @@ def mid_too_extreme(side: str, mid: float) -> str | None:
 
 def size_at_entry(entry_cents: float) -> tuple[int, float]:
     """Return (contracts, budget_usd) for intended entry price."""
-    bankroll = float(bot_config.KALSHI_BANKROLL_USD)
-    try:
-        import kalshi_cycle
+    import kalshi_sizing
 
-        bankroll = kalshi_cycle._bankroll_usd()
-    except Exception:
-        pass
-    budget = max(0.0, bankroll * float(bot_config.KALSHI_DEPLOY_PCT))
-    price = float(entry_cents) / 100.0
-    cap = max(1, int(bot_config.KALSHI_MAX_CONTRACTS))
-    if price <= 0:
-        return 0, budget
-    contracts = max(0, min(cap, int(budget // price)))
-    if contracts < 1 and budget >= price:
-        contracts = 1
-    return contracts, budget
+    return kalshi_sizing.contracts_for_entry(entry_cents)
 
 
 def has_actionable_edge(

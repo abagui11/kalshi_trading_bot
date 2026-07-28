@@ -217,6 +217,15 @@ def place_order(
     yes_price_cents: int | None = None,
 ) -> dict[str, Any]:
     """Place an order. No-op stub when KALSHI_PAPER_ONLY=true."""
+    import kalshi_sizing
+
+    entry = float(yes_price_cents if yes_price_cents is not None else 0)
+    try:
+        kalshi_sizing.assert_order_allowed(int(contracts), entry if entry > 0 else 1.0)
+    except ValueError as exc:
+        logger.error("Refusing order: %s", exc)
+        return {"status": "rejected", "error": str(exc), "ticker": ticker}
+
     if config.KALSHI_PAPER_ONLY:
         logger.info(
             "PAPER_ONLY: skip live order %s %s x%s @ %s",

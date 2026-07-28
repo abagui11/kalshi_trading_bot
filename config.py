@@ -108,7 +108,12 @@ KALSHI_CYCLE_OFFSET_SEC: int = int(os.getenv("KALSHI_CYCLE_OFFSET_SEC", "30") or
 # Sizing vs ~$77 bankroll: each trade spends up to DEPLOY_PCT of bankroll (capped by MAX_CONTRACTS).
 KALSHI_BANKROLL_USD: float = float(os.getenv("KALSHI_BANKROLL_USD", "77") or "77")
 KALSHI_DEPLOY_PCT: float = float(os.getenv("KALSHI_DEPLOY_PCT", "0.05") or "0.05")
+# Hard notional ceiling per order (live + paper). Blocks oversized fills if caps mis-set.
+KALSHI_MAX_NOTIONAL_USD: float = float(
+    os.getenv("KALSHI_MAX_NOTIONAL_USD", "5") or "5"
+)
 # When live, prefer Kalshi account balance for bankroll; fall back to KALSHI_BANKROLL_USD.
+# Sizing still never exceeds KALSHI_BANKROLL_USD (see kalshi_sizing.sizing_bankroll_usd).
 KALSHI_USE_LIVE_BALANCE: bool = _optional_bool("KALSHI_USE_LIVE_BALANCE", default=True)
 
 # Multi-bot enable list. Default adverse-only (control/lottery are cost/experiments).

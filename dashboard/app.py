@@ -19,13 +19,13 @@ _PKG_DIR = Path(__file__).resolve().parent
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Kalshi 15m Multi-Bot Paper", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Kalshi 15m Bot", docs_url=None, redoc_url=None)
     paper.init_db()
 
     templates = Jinja2Templates(directory=str(_PKG_DIR / "templates"))
     static_dir = _PKG_DIR / "static"
     if static_dir.is_dir():
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     async def index(
@@ -53,12 +53,29 @@ def create_app() -> FastAPI:
     async def api_performance(
         bot: str | None = Query(None),
     ) -> dict:
-        bot_id = bot if bot in bot_config.ENABLED_BOTS else "control"
+        default = bot_config.ENABLED_BOTS[0] if bot_config.ENABLED_BOTS else "control"
+        bot_id = bot if bot in bot_config.ENABLED_BOTS else default
         return data.get_performance_payload(bot_id=bot_id)
 
     @app.get("/api/structure")
     async def api_structure() -> dict:
         return {"assets": data.get_structure_payload()}
+
+    @app.get("/api/archives")
+    async def api_archives() -> dict:
+        return {"archives": data.list_paper_archives()}
+
+    @app.get("/api/archives/{archive_id}/file/{filename}")
+    async def api_archive_file(archive_id: str, filename: str) -> FileResponse:
+        if "/" in archive_id or ".." in archive_id or "/" in filename or ".." in filename:
+            raise HTTPException(status_code=400, detail="invalid path")
+        if not archive_id.startswith("paper_"):
+            raise HTTPException(status_code=404, detail="archive not found")
+        candidate = (config.ROOT_DIR / "archives" / archive_id / filename).resolve()
+        root = (config.ROOT_DIR / "archives").resolve()
+        if not str(candidate).startswith(str(root)) or not candidate.is_file():
+            raise HTTPException(status_code=404, detail="file not found")
+        return FileResponse(candidate, filename=filename)
 
     @app.get("/api/journal")
     async def api_journal(

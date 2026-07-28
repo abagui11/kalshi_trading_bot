@@ -11,16 +11,15 @@ from strategies.context import SharedCycleContext
 
 
 def _lottery_contracts(entry_cents: float) -> int:
-    bankroll = float(bot_config.KALSHI_BANKROLL_USD)
-    budget = max(0.0, bankroll * float(bot_config.LOTTERY_DEPLOY_PCT))
-    price = float(entry_cents) / 100.0
+    import kalshi_sizing
+
+    contracts, _ = kalshi_sizing.contracts_for_entry(
+        entry_cents,
+        deploy_pct=float(bot_config.LOTTERY_DEPLOY_PCT),
+    )
+    # Lottery has its own max; also respect global hard caps via clamp.
     cap = max(1, int(bot_config.LOTTERY_MAX_CONTRACTS))
-    if price <= 0:
-        return 0
-    contracts = max(0, min(cap, int(budget // price)))
-    if contracts < 1 and budget >= price:
-        contracts = 1
-    return contracts
+    return kalshi_sizing.clamp_contracts(min(contracts, cap), entry_cents)
 
 
 class LotteryStrategy:

@@ -135,11 +135,14 @@
   </style>
 </head>
 <body>
-  <h1>Kalshi 15m multi-bot paper</h1>
+  <h1>Kalshi 15m · {{ 'LIVE' if not status.paper_only else 'PAPER' }}</h1>
   <p class="sub">
-    {{ status.env }} · paper_only={{ status.paper_only }} ·
+    <strong>{{ status.mode | upper }}</strong> · {{ status.env }} ·
+    primary={{ status.primary_bot }} ·
     {{ status.series | join(', ') }} · epoch {{ status.epoch }} ·
     bots={{ status.enabled_bots | join(', ') }} ·
+    size≤{{ status.max_contracts }}ct / ${{ "%.2f"|format(status.max_notional_usd) }} ·
+    deploy {{ "%.0f"|format(status.deploy_pct * 100) }}% of ${{ "%.2f"|format(status.bankroll_usd) }} ·
     watchdog={{ status.watchdog_enabled }}/exec={{ status.watchdog_execute }}
   </p>
 
@@ -346,5 +349,29 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h2>Archived paper books</h2>
+  {% if archives %}
+  <table>
+    <thead>
+      <tr><th>Archive</th><th>Ledger</th><th>Export</th></tr>
+    </thead>
+    <tbody>
+      {% for a in archives %}
+      <tr>
+        <td>{{ a.label }}</td>
+        <td>{{ 'yes' if a.has_ledger else '—' }}</td>
+        <td>
+          {% if a.csv_url %}
+          <a href="{{ a.csv_url }}">{{ a.csv_files[0] }}</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="meta">No archives under <code>archives/paper_*</code> yet.</p>
+  {% endif %}
 </body>
 </html>

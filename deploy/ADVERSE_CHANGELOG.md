@@ -5,6 +5,49 @@ adverse arms from. Tag **ADVERSE_SENSITIVE: yes** when that applies.
 
 ---
 
+## 2026-07-28 — Live sizing hard caps + dashboard live/archive
+
+**ADVERSE_SENSITIVE:** yes  
+**Risk:** med (live money path tightened; watchdog gated)
+
+### What changed
+- `kalshi_sizing.py`: size off `min(live_balance, KALSHI_BANKROLL_USD)`; hard `KALSHI_MAX_NOTIONAL_USD` (default $5) + `MAX_CONTRACTS`.
+- `place_order` / `apply_and_log` refuse oversized orders; no shadow open if order fails.
+- Watchdog skips entirely unless `control` is in `ENABLED_BOTS` (was still able to live-fill as control).
+- Dashboard: LIVE/PAPER badge, primary=enabled bot (adverse), risk caps in subtitle, archived paper CSV list.
+
+### Rollback
+Revert commit / set `KALSHI_PAPER_ONLY=true`.
+
+---
+
+
+**ADVERSE_SENSITIVE:** yes  
+**Risk:** high (real money)
+
+### What changed
+- `KALSHI_PAPER_ONLY=false` — `place_order` hits Kalshi wallet.
+- Shadow paper book reset to wallet start (~$76.47); prior paper epoch archived under `archives/paper_*` + CSV export.
+- Still `ENABLED_BOTS=adverse`, `HTF_REFRESH_MODE=once_per_window`, `KALSHI_MAX_CONTRACTS=5`.
+- `KALSHI_USE_LIVE_BALANCE=true` for sizing vs wallet.
+
+### What did NOT change
+- Adverse arm/fill thresholds
+- HTF once-per-window cadence
+
+### Rollback
+```
+KALSHI_PAPER_ONLY=true
+systemctl restart kalshi-agent.service
+```
+
+### Soak checks
+- First live fill appears in Kalshi UI and shadow ledger
+- Settlement matches Kalshi result
+- Claude $ and adverse PnL vs wallet
+
+---
+
 ## 2026-07-28 — HTF refresh cadence + adverse-only default
 
 **ADVERSE_SENSITIVE:** yes  

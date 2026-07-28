@@ -71,14 +71,21 @@ def get_bots_payload() -> list[dict[str, Any]]:
 
 def get_status_payload() -> dict[str, Any]:
     bots = get_bots_payload()
-    control = next((b for b in bots if b["bot_id"] == "control"), bots[0] if bots else {})
+    primary = next(
+        (b for b in bots if b["bot_id"] in bot_config.ENABLED_BOTS),
+        bots[0] if bots else {},
+    )
+    primary_id = primary.get("bot_id") or (
+        bot_config.ENABLED_BOTS[0] if bot_config.ENABLED_BOTS else "control"
+    )
     return {
         "bot": "kalshi_15m_multi",
+        "mode": "paper" if config.KALSHI_PAPER_ONLY else "live",
         "paper_only": config.KALSHI_PAPER_ONLY,
         "env": config.KALSHI_ENV,
         "series": list(config.KALSHI_SERIES),
-        "equity_usd": control.get("equity_usd"),
-        "cash_usd": paper.get_stats(bot_id="control").get("cash_usd"),
+        "equity_usd": primary.get("equity_usd"),
+        "cash_usd": paper.get_stats(bot_id=primary_id).get("cash_usd"),
         "open_count": sum(int(b.get("open_count") or 0) for b in bots),
         "closed_count": sum(int(b.get("closed_count") or 0) for b in bots),
         "epoch": bot_config.PAPER_EPOCH_LABEL,
@@ -86,11 +93,18 @@ def get_status_payload() -> dict[str, Any]:
         "watchdog_execute": bot_config.watchdog_execute_enabled(),
         "broadcast_only_trades": bot_config.BROADCAST_ONLY_TRADES,
         "enabled_bots": list(bot_config.ENABLED_BOTS),
+        "max_contracts": int(bot_config.KALSHI_MAX_CONTRACTS),
+        "max_notional_usd": float(bot_config.KALSHI_MAX_NOTIONAL_USD),
+        "deploy_pct": float(bot_config.KALSHI_DEPLOY_PCT),
+        "bankroll_usd": float(bot_config.KALSHI_BANKROLL_USD),
+        "primary_bot": primary_id,
     }
 
 
 def get_performance_payload(*, bot_id: str | None = None) -> dict[str, Any]:
-    bid = bot_id or "control"
+    bid = bot_id or (
+        bot_config.ENABLED_BOTS[0] if bot_config.ENABLED_BOTS else "control"
+    )
     stats = paper.get_stats(bot_id=bid)
     decisions = paper.get_decisions(limit=200, bot_id=bid)
     scores = [
@@ -243,14 +257,37 @@ def get_journal_payload(
 
 
 def _default_bot_tab(bots: list[dict[str, Any]]) -> str:
+    enabled = list(bot_config.ENABLED_BOTS)
+    if enabled:
+        return enabled[0]
     if not bots:
         return "control"
-    # Prefer best realized PnL; fall back to control if present.
-    best = bots[0]["bot_id"]
-    if any(b["bot_id"] == "control" for b in bots):
-        # Use leader unless control is requested as stable default — plan says best PnL or control.
-        return best
-    return best
+    return bots[0]["bot_id"]
+
+
+def list_paper_archives() -> list[dict[str, Any]]:
+    """List archived paper epochs under archives/ (newest first)."""
+    root = config.ROOT_DIR / "archives"
+    if not root.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for path in sorted(root.iterdir(), reverse=True):
+        if not path.is_dir() or not path.name.startswith("paper_"):
+            continue
+        ledger = path / "ledger.db"
+        csvs = sorted(path.glob("*.csv"))
+        out.append(
+            {
+                "id": path.name,
+                "label": path.name.replace("paper_", "", 1),
+                "has_ledger": ledger.is_file(),
+                "csv_files": [p.name for p in csvs],
+                "csv_url": (
+                    f"/api/archives/{path.name}/file/{csvs[0].name}" if csvs else None
+                ),
+            }
+        )
+    return out[:20]
 
 
 def dashboard_context(
@@ -278,4 +315,5 @@ def dashboard_context(
         "structure": get_structure_payload(),
         "journal": get_journal_payload(filter_mode=filter_mode, bot_id=active),
         "journal_filter": filter_mode,
+        "archives": list_paper_archives(),
     }

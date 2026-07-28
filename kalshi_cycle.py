@@ -96,38 +96,16 @@ def _contract_price_cents(side: str, yes_mid_cents: float) -> float:
 
 
 def _bankroll_usd() -> float:
-    configured = float(bot_config.KALSHI_BANKROLL_USD)
-    if config.KALSHI_PAPER_ONLY or not bot_config.KALSHI_USE_LIVE_BALANCE:
-        return configured
-    try:
-        bal = kalshi_client.get_balance()
-        if bal.get("balance_dollars") is not None:
-            return max(0.0, float(bal["balance_dollars"]))
-        if bal.get("balance") is not None:
-            raw = float(bal["balance"])
-            return raw / 100.0 if raw > 1000 else raw
-        if bal.get("portfolio_value") is not None:
-            raw = float(bal["portfolio_value"])
-            return raw / 100.0 if raw > 1000 else raw
-    except Exception:
-        logger.exception(
-            "Live balance fetch failed — using KALSHI_BANKROLL_USD=%.2f", configured
-        )
-    return configured
+    import kalshi_sizing
+
+    return kalshi_sizing.sizing_bankroll_usd()
 
 
 def size_contracts(side: str, yes_mid_cents: float) -> tuple[int, float, float]:
+    import kalshi_sizing
+
     entry_cents = _contract_price_cents(side, yes_mid_cents)
-    price = entry_cents / 100.0
-    bankroll = _bankroll_usd()
-    budget = max(0.0, bankroll * float(bot_config.KALSHI_DEPLOY_PCT))
-    if price <= 0:
-        return 0, entry_cents, budget
-    raw = int(budget // price)
-    cap = max(1, int(bot_config.KALSHI_MAX_CONTRACTS))
-    contracts = max(0, min(cap, raw))
-    if contracts < 1 and budget >= price:
-        contracts = 1
+    contracts, budget = kalshi_sizing.contracts_for_entry(entry_cents)
     return contracts, entry_cents, budget
 
 
@@ -697,67 +675,158 @@ def apply_and_log(
         suggestion.bot_id = suggestion.bot_id or "control"
 
     if suggestion.is_trade() and not suggestion.pending_limit:
-        kalshi_client.place_order(
-            suggestion.market_ticker,
-            suggestion.side,
-            suggestion.contracts,
-            yes_price_cents=int(round(suggestion.entry_cents or 0)),
+        import kalshi_sizing
+
+        entry = float(suggestion.entry_cents or 0)
+        suggestion.contracts = kalshi_sizing.clamp_contracts(
+            int(suggestion.contracts or 0), entry
         )
-        opened = paper.open_trade(suggestion)
-        if opened:
-            suggestion.opened = True
-            suggestion.position_id = int(opened["id"])
-            chart_path = _notify_decision(
-                suggestion, market=market, opened=True
+        if suggestion.contracts < 1:
+            suggestion = kalshi_finalize.make_skip(
+                rationale=(
+                    f"signal was {suggestion.side} but size clamped to 0 "
+                    f"(max {bot_config.KALSHI_MAX_CONTRACTS} ct / "
+                    f"${float(bot_config.KALSHI_MAX_NOTIONAL_USD):.2f} notional). "
+                    f"Original why: {suggestion.rationale}"
+                ),
+                base={
+                    "series": suggestion.series,
+                    "market_ticker": suggestion.market_ticker,
+                    "product_id": suggestion.product_id,
+                    "mid_cents": suggestion.mid_cents,
+                    "fair_yes_cents": suggestion.fair_yes_cents,
+                    "edge_cents": suggestion.edge_cents,
+                    "expiry_ts": suggestion.expiry_ts,
+                    "spot": suggestion.spot,
+                    "strike": suggestion.strike,
+                    "cycle_id": suggestion.cycle_id,
+                    "bot_id": suggestion.bot_id,
+                },
+                skip_codes=["size_clamped_zero"],
+                trigger_type=suggestion.trigger_type or "none",
             )
-            if chart_path:
-                suggestion.chart_path = chart_path
-                paper.set_position_chart_path(suggestion.position_id, chart_path)
-            paper.log_decision(suggestion)
-            logger.info(
-                "Paper opened [%s] %s %s x%s @ %.1f¢ fair=%.1f edge=%+.1f gate=%s",
+            suggestion.bot_id = suggestion.bot_id or "control"
+        else:
+            try:
+                kalshi_sizing.assert_order_allowed(suggestion.contracts, entry)
+                order_resp = kalshi_client.place_order(
+                    suggestion.market_ticker,
+                    suggestion.side,
+                    suggestion.contracts,
+                    yes_price_cents=int(round(entry)),
+                )
+            except Exception:
+                logger.exception(
+                    "Live/paper order failed [%s] %s — not opening shadow position",
+                    suggestion.bot_id,
+                    suggestion.market_ticker,
+                )
+                suggestion = kalshi_finalize.make_skip(
+                    rationale=(
+                        f"signal was {suggestion.side} but order rejected/failed. "
+                        f"Original why: {suggestion.rationale}"
+                    ),
+                    base={
+                        "series": suggestion.series,
+                        "market_ticker": suggestion.market_ticker,
+                        "product_id": suggestion.product_id,
+                        "mid_cents": suggestion.mid_cents,
+                        "fair_yes_cents": suggestion.fair_yes_cents,
+                        "edge_cents": suggestion.edge_cents,
+                        "expiry_ts": suggestion.expiry_ts,
+                        "spot": suggestion.spot,
+                        "strike": suggestion.strike,
+                        "cycle_id": suggestion.cycle_id,
+                        "bot_id": suggestion.bot_id,
+                    },
+                    skip_codes=["order_failed"],
+                    trigger_type=suggestion.trigger_type or "none",
+                )
+                suggestion.bot_id = suggestion.bot_id or "control"
+                paper.log_decision(suggestion)
+                _notify_decision(suggestion, market=market, opened=False)
+                return suggestion
+
+            if isinstance(order_resp, dict) and (
+                order_resp.get("error") or order_resp.get("status") == "rejected"
+            ):
+                logger.warning("Order error response: %s", order_resp)
+                err = order_resp.get("error") or "rejected"
+                suggestion = kalshi_finalize.make_skip(
+                    rationale=f"order error: {err}",
+                    base={
+                        "series": suggestion.series,
+                        "market_ticker": suggestion.market_ticker,
+                        "product_id": suggestion.product_id,
+                        "mid_cents": suggestion.mid_cents,
+                        "fair_yes_cents": suggestion.fair_yes_cents,
+                        "edge_cents": suggestion.edge_cents,
+                        "expiry_ts": suggestion.expiry_ts,
+                        "cycle_id": suggestion.cycle_id,
+                        "bot_id": suggestion.bot_id,
+                    },
+                    skip_codes=["order_error"],
+                )
+                paper.log_decision(suggestion)
+                _notify_decision(suggestion, market=market, opened=False)
+                return suggestion
+
+            opened = paper.open_trade(suggestion)
+            if opened:
+                suggestion.opened = True
+                suggestion.position_id = int(opened["id"])
+                chart_path = _notify_decision(
+                    suggestion, market=market, opened=True
+                )
+                if chart_path:
+                    suggestion.chart_path = chart_path
+                    paper.set_position_chart_path(suggestion.position_id, chart_path)
+                paper.log_decision(suggestion)
+                logger.info(
+                    "Opened [%s] %s %s x%s @ %.1f¢ fair=%.1f edge=%+.1f gate=%s paper_only=%s",
+                    suggestion.bot_id,
+                    suggestion.product_id,
+                    suggestion.side,
+                    suggestion.contracts,
+                    suggestion.entry_cents or 0,
+                    suggestion.fair_yes_cents or 0,
+                    suggestion.edge_cents or 0,
+                    suggestion.gate_outcome,
+                    config.KALSHI_PAPER_ONLY,
+                )
+                return suggestion
+            logger.warning(
+                "Shadow open failed [%s] for %s (order may still be live)",
                 suggestion.bot_id,
-                suggestion.product_id,
-                suggestion.side,
-                suggestion.contracts,
-                suggestion.entry_cents or 0,
-                suggestion.fair_yes_cents or 0,
-                suggestion.edge_cents or 0,
-                suggestion.gate_outcome,
+                suggestion.market_ticker,
             )
-            return suggestion
-        logger.warning(
-            "Paper open failed [%s] for %s",
-            suggestion.bot_id,
-            suggestion.market_ticker,
-        )
-        suggestion = kalshi_finalize.make_skip(
-            rationale=(
-                f"signal was {suggestion.side} but paper open failed "
-                f"(cash or duplicate). Original why: {suggestion.rationale}"
-            ),
-            base={
-                "series": suggestion.series,
-                "market_ticker": suggestion.market_ticker,
-                "product_id": suggestion.product_id,
-                "mid_cents": suggestion.mid_cents,
-                "fair_yes_cents": suggestion.fair_yes_cents,
-                "edge_cents": suggestion.edge_cents,
-                "expiry_ts": suggestion.expiry_ts,
-                "spot": suggestion.spot,
-                "strike": suggestion.strike,
-                "cycle_id": suggestion.cycle_id,
-                "bot_id": suggestion.bot_id,
-            },
-            htf_bias=suggestion.h1_bias_tag or "unknown",
-            setup_tags=list(suggestion.setup_tags or []),
-            skip_codes=["paper_open_failed"],
-            structure_chart_path=suggestion.structure_chart_path,
-            entry_chart_path=suggestion.entry_chart_path,
-            ict_action=suggestion.ict_action,
-            ict_bias=suggestion.ict_bias,
-            trigger_type=suggestion.trigger_type or "none",
-        )
+            suggestion = kalshi_finalize.make_skip(
+                rationale=(
+                    f"signal was {suggestion.side} but paper open failed "
+                    f"(cash or duplicate). Original why: {suggestion.rationale}"
+                ),
+                base={
+                    "series": suggestion.series,
+                    "market_ticker": suggestion.market_ticker,
+                    "product_id": suggestion.product_id,
+                    "mid_cents": suggestion.mid_cents,
+                    "fair_yes_cents": suggestion.fair_yes_cents,
+                    "edge_cents": suggestion.edge_cents,
+                    "expiry_ts": suggestion.expiry_ts,
+                    "spot": suggestion.spot,
+                    "strike": suggestion.strike,
+                    "cycle_id": suggestion.cycle_id,
+                    "bot_id": suggestion.bot_id,
+                },
+                htf_bias=suggestion.h1_bias_tag or "unknown",
+                setup_tags=list(suggestion.setup_tags or []),
+                skip_codes=["paper_open_failed"],
+                structure_chart_path=suggestion.structure_chart_path,
+                entry_chart_path=suggestion.entry_chart_path,
+                ict_action=suggestion.ict_action,
+                ict_bias=suggestion.ict_bias,
+                trigger_type=suggestion.trigger_type or "none",
+            )
         suggestion.bot_id = suggestion.bot_id or "control"
     else:
         logger.info(

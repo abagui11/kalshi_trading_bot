@@ -140,6 +140,13 @@ def run_kalshi_watchdog() -> list[KalshiSuggestion]:
     """One LTF scan across configured series; at most one fire per series."""
     if not bot_config.WATCHDOG_ENABLED:
         return []
+    # Watchdog fills as control — do not fire live/paper fills unless control is enabled.
+    if "control" not in bot_config.ENABLED_BOTS:
+        logger.info(
+            "Kalshi watchdog skipped — control not in ENABLED_BOTS=%s",
+            bot_config.ENABLED_BOTS,
+        )
+        return []
 
     from kalshi_cycle import apply_and_log
 
