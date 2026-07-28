@@ -63,7 +63,7 @@ def get_bots_payload() -> list[dict[str, Any]]:
                 "open_count": s["open_count"],
                 "open_cost_usd": s["open_cost_usd"],
                 "avg_chart_read": avg_chart,
-                "decision_count": len(decisions),
+                "decision_count": paper.count_decisions(bot_id=s["bot_id"]),
             }
         )
     return out
@@ -125,7 +125,7 @@ def get_performance_payload(*, bot_id: str | None = None) -> dict[str, Any]:
         "closed_count": stats["closed_count"],
         "open_count": stats["open_count"],
         "avg_chart_read": avg_chart,
-        "decision_count": len(decisions),
+        "decision_count": paper.count_decisions(bot_id=bid),
     }
 
 

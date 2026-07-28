@@ -64,6 +64,7 @@ class TestKalshiDecisionsLog(unittest.TestCase):
         paper.log_decision(trade)
         rows = paper.get_decisions(limit=10)
         self.assertGreaterEqual(len(rows), 2)
+        self.assertEqual(paper.count_decisions(), 2)
         sides = {r["side"] for r in rows}
         self.assertIn("SKIP", sides)
         self.assertIn("YES", sides)

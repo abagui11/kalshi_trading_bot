@@ -1099,6 +1099,22 @@ def log_decision(suggestion: KalshiSuggestion) -> int:
         return int(cur.lastrowid)
 
 
+def count_decisions(*, bot_id: str | None = None) -> int:
+    """Total kalshi_decisions rows (not capped like get_decisions)."""
+    init_db()
+    with _connect() as conn:
+        if bot_id:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM kalshi_decisions WHERE bot_id = ?",
+                (bot_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM kalshi_decisions",
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+
 def get_decisions(
     limit: int = 200,
     *,
