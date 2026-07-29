@@ -17,6 +17,7 @@ class OrderV2BodyTests(unittest.TestCase):
             5,
             side_price_cents=40.0,
             client_order_id="cid-1",
+            take_cents=0,
         )
         self.assertEqual(body["side"], "bid")
         self.assertEqual(body["price"], "0.4000")
@@ -34,10 +35,37 @@ class OrderV2BodyTests(unittest.TestCase):
             3,
             side_price_cents=30.0,
             client_order_id="cid-2",
+            take_cents=0,
         )
         self.assertEqual(body["side"], "ask")
         self.assertEqual(body["price"], "0.7000")
         self.assertEqual(body["count"], "3.00")
+
+    def test_take_cents_crosses_for_yes_and_no(self) -> None:
+        yes_body = kalshi_client.build_order_v2_body(
+            "KXBTC15M-X",
+            "YES",
+            5,
+            side_price_cents=40.0,
+            take_cents=2,
+            client_order_id="cid-y",
+        )
+        # Bid YES 2¢ higher to take
+        self.assertEqual(yes_body["side"], "bid")
+        self.assertEqual(yes_body["price"], "0.4200")
+
+        no_body = kalshi_client.build_order_v2_body(
+            "KXETH15M-X",
+            "NO",
+            5,
+            side_price_cents=24.0,
+            take_cents=2,
+            client_order_id="cid-n",
+        )
+        # Buy NO @ 26¢ ≡ ask YES @ 74¢ (was 76¢ at mid)
+        self.assertEqual(no_body["side"], "ask")
+        self.assertEqual(no_body["price"], "0.7400")
+        self.assertEqual(no_body["_side_limit_cents"], 26.0)
 
     def test_filled_contract_count_parses_fp(self) -> None:
         self.assertEqual(
@@ -62,15 +90,17 @@ class OrderV2BodyTests(unittest.TestCase):
             }
 
         with patch.object(config, "KALSHI_PAPER_ONLY", False):
-            with patch.object(kalshi_client, "request", side_effect=fake_request):
-                with patch("kalshi_sizing.assert_order_allowed"):
-                    resp = kalshi_client.place_order(
-                        "KXBTC15M-X", "NO", 5, yes_price_cents=25
-                    )
+            with patch.object(config, "KALSHI_LIVE_TAKE_CENTS", 0):
+                with patch.object(kalshi_client, "request", side_effect=fake_request):
+                    with patch("kalshi_sizing.assert_order_allowed"):
+                        resp = kalshi_client.place_order(
+                            "KXBTC15M-X", "NO", 5, yes_price_cents=25
+                        )
         self.assertEqual(captured["method"], "POST")
         self.assertEqual(captured["path"], "/portfolio/events/orders")
         self.assertEqual(captured["body"]["side"], "ask")
         self.assertEqual(captured["body"]["price"], "0.7500")
+        self.assertNotIn("_side_limit_cents", captured["body"])
         self.assertEqual(resp["order_id"], "oid")
 
 

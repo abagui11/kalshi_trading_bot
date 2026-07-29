@@ -115,6 +115,12 @@ KALSHI_MAX_NOTIONAL_USD: float = float(
 # When live, prefer Kalshi account balance for bankroll; fall back to KALSHI_BANKROLL_USD.
 # Sizing still never exceeds KALSHI_BANKROLL_USD (see kalshi_sizing.sizing_bankroll_usd).
 KALSHI_USE_LIVE_BALANCE: bool = _optional_bool("KALSHI_USE_LIVE_BALANCE", default=True)
+# Live IOC must cross the book; paper filled at mid with no counterparty.
+# Add this many cents of aggression on the *side* we buy (YES bid up / NO ask down).
+KALSHI_LIVE_TAKE_CENTS: float = float(os.getenv("KALSHI_LIVE_TAKE_CENTS", "2") or "2")
+KALSHI_LIVE_TIME_IN_FORCE: str = (
+    (_optional("KALSHI_LIVE_TIME_IN_FORCE") or "immediate_or_cancel").strip().lower()
+)
 
 # Multi-bot enable list. Default adverse-only (control/lottery are cost/experiments).
 _bots_raw = _optional("ENABLED_BOTS") or "adverse"

@@ -952,6 +952,15 @@ def apply_and_log(
                     _notify_decision(suggestion, market=market, opened=False)
                     return suggestion
                 suggestion.contracts = max(1, int(filled))
+                suggestion.entry_cents = kalshi_client.side_fill_cents_from_response(
+                    str(suggestion.side),
+                    order_resp if isinstance(order_resp, dict) else {},
+                    fallback_side_cents=float(
+                        (order_resp or {}).get("side_limit_cents")
+                        or suggestion.entry_cents
+                        or 0
+                    ),
+                )
 
             opened = paper.open_trade(suggestion)
             if opened:

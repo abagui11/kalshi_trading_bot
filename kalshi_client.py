@@ -237,22 +237,30 @@ def build_order_v2_body(
     side_price_cents: float,
     client_order_id: str | None = None,
     time_in_force: str = "immediate_or_cancel",
+    take_cents: float = 0.0,
 ) -> dict[str, Any]:
     """Build CreateOrderV2Request body.
 
     V2 quotes the YES book only:
       - buy YES  -> side=bid at YES price
       - buy NO   -> side=ask at YES price (= 100¢ − NO price)
+
+    ``take_cents`` worsens the *side* limit so an IOC can cross (paper filled at
+    mid with no counterparty; live needs to take).
     """
     side_u = side.upper()
+    take = max(0.0, float(take_cents))
+    # Pay up to ``take`` more for the contract side we want to buy.
+    paid_side_cents = min(99.0, max(1.0, float(side_price_cents) + take))
     if side_u == "YES":
         book_side = "bid"
-        yes_cents = float(side_price_cents)
+        yes_cents = paid_side_cents
     elif side_u == "NO":
         book_side = "ask"
-        yes_cents = 100.0 - float(side_price_cents)
+        yes_cents = 100.0 - paid_side_cents
     else:
         raise ValueError(f"side must be YES or NO, got {side!r}")
+    yes_cents = min(99.0, max(1.0, yes_cents))
 
     return {
         "ticker": ticker,
@@ -262,7 +270,14 @@ def build_order_v2_body(
         "price": _fp_dollars_from_cents(yes_cents),
         "time_in_force": time_in_force,
         "self_trade_prevention_type": "taker_at_cross",
+        # Echo for logging / ledger (not sent fields beyond API schema — strip before POST)
+        "_side_limit_cents": paid_side_cents,
     }
+
+
+def _api_order_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Drop internal keys before sending to Kalshi."""
+    return {k: v for k, v in body.items() if not str(k).startswith("_")}
 
 
 def filled_contract_count(order_resp: dict[str, Any]) -> float:
@@ -278,6 +293,28 @@ def filled_contract_count(order_resp: dict[str, Any]) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return 0.0
+
+
+def side_fill_cents_from_response(
+    side: str,
+    order_resp: dict[str, Any],
+    *,
+    fallback_side_cents: float,
+) -> float:
+    """Map V2 average_fill_price (YES dollars) back to side cents for the book."""
+    avg = order_resp.get("average_fill_price")
+    if avg is None or avg == "":
+        return float(fallback_side_cents)
+    try:
+        yes_cents = float(avg) * 100.0
+    except (TypeError, ValueError):
+        return float(fallback_side_cents)
+    side_u = side.upper()
+    if side_u == "YES":
+        return yes_cents
+    if side_u == "NO":
+        return 100.0 - yes_cents
+    return float(fallback_side_cents)
 
 
 def place_order(
@@ -326,24 +363,40 @@ def place_order(
             "ticker": ticker,
         }
 
+    take = float(getattr(config, "KALSHI_LIVE_TAKE_CENTS", 2) or 0)
+    tif = str(
+        getattr(config, "KALSHI_LIVE_TIME_IN_FORCE", "immediate_or_cancel")
+        or "immediate_or_cancel"
+    ).strip().lower()
+    if tif not in ("immediate_or_cancel", "fill_or_kill", "good_till_canceled"):
+        tif = "immediate_or_cancel"
+
     body = build_order_v2_body(
         ticker,
         side,
         contracts,
         side_price_cents=float(yes_price_cents),
+        take_cents=take,
+        time_in_force=tif,
     )
+    api_body = _api_order_body(body)
     logger.info(
-        "Live order V2 %s %s x%s price=%s (client_order_id=%s)",
+        "Live order V2 %s %s x%s mid_side=%.1f¢ limit_side=%.1f¢ yes_px=%s tif=%s "
+        "(client_order_id=%s)",
         ticker,
-        body["side"],
-        body["count"],
-        body["price"],
-        body["client_order_id"],
+        api_body["side"],
+        api_body["count"],
+        float(yes_price_cents),
+        float(body.get("_side_limit_cents") or yes_price_cents),
+        api_body["price"],
+        tif,
+        api_body["client_order_id"],
     )
-    resp = request("POST", "/portfolio/events/orders", json_body=body, auth=True)
+    resp = request("POST", "/portfolio/events/orders", json_body=api_body, auth=True)
     if isinstance(resp, dict):
-        resp.setdefault("client_order_id", body["client_order_id"])
+        resp.setdefault("client_order_id", api_body["client_order_id"])
         resp.setdefault("ticker", ticker)
+        resp["side_limit_cents"] = body.get("_side_limit_cents")
     return resp
 
 
