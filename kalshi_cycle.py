@@ -692,6 +692,8 @@ def build_shared_context(
         from backtest.record_live import maybe_record_from_context
 
         maybe_record_from_context(ctx)
+    except ImportError:
+        pass
     except Exception:
         logger.exception("Snapshot archive record failed for %s", ticker)
     return ctx
@@ -908,6 +910,46 @@ def apply_and_log(
                 paper.log_decision(suggestion)
                 _notify_decision(suggestion, market=market, opened=False)
                 return suggestion
+
+            # V2 IOC may return 201 with fill_count=0 — do not open a ghost book.
+            status = str((order_resp or {}).get("status") or "")
+            if status != "paper_only":
+                filled = kalshi_client.filled_contract_count(
+                    order_resp if isinstance(order_resp, dict) else {}
+                )
+                if filled < 1:
+                    logger.warning(
+                        "Live order placed but unfilled [%s] %s resp=%s",
+                        suggestion.bot_id,
+                        suggestion.market_ticker,
+                        order_resp,
+                    )
+                    suggestion = kalshi_finalize.make_skip(
+                        rationale=(
+                            f"signal was {suggestion.side} but live order unfilled "
+                            f"(IOC). Original why: {suggestion.rationale}"
+                        ),
+                        base={
+                            "series": suggestion.series,
+                            "market_ticker": suggestion.market_ticker,
+                            "product_id": suggestion.product_id,
+                            "mid_cents": suggestion.mid_cents,
+                            "fair_yes_cents": suggestion.fair_yes_cents,
+                            "edge_cents": suggestion.edge_cents,
+                            "expiry_ts": suggestion.expiry_ts,
+                            "spot": suggestion.spot,
+                            "strike": suggestion.strike,
+                            "cycle_id": suggestion.cycle_id,
+                            "bot_id": suggestion.bot_id,
+                        },
+                        skip_codes=["order_unfilled"],
+                        trigger_type=suggestion.trigger_type or "none",
+                    )
+                    suggestion.bot_id = suggestion.bot_id or "control"
+                    paper.log_decision(suggestion)
+                    _notify_decision(suggestion, market=market, opened=False)
+                    return suggestion
+                suggestion.contracts = max(1, int(filled))
 
             opened = paper.open_trade(suggestion)
             if opened:

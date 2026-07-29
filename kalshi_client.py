@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -114,6 +115,15 @@ def request(
             headers={"Accept": "application/json"},
             timeout=_TIMEOUT,
         )
+    if not response.ok:
+        body_preview = (response.text or "")[:500]
+        logger.error(
+            "Kalshi %s %s -> %s: %s",
+            method.upper(),
+            path,
+            response.status_code,
+            body_preview,
+        )
     response.raise_for_status()
     if not response.content:
         return {}
@@ -209,6 +219,67 @@ def get_market_result(ticker: str) -> str | None:
     return None
 
 
+def _fp_count(contracts: int) -> str:
+    """Fixed-point contract count string required by order V2."""
+    return f"{max(0, int(contracts)):.2f}"
+
+
+def _fp_dollars_from_cents(cents: float) -> str:
+    """Fixed-point dollar price string (YES-leg) for order V2."""
+    return f"{max(0.0, float(cents)) / 100.0:.4f}"
+
+
+def build_order_v2_body(
+    ticker: str,
+    side: str,
+    contracts: int,
+    *,
+    side_price_cents: float,
+    client_order_id: str | None = None,
+    time_in_force: str = "immediate_or_cancel",
+) -> dict[str, Any]:
+    """Build CreateOrderV2Request body.
+
+    V2 quotes the YES book only:
+      - buy YES  -> side=bid at YES price
+      - buy NO   -> side=ask at YES price (= 100¢ − NO price)
+    """
+    side_u = side.upper()
+    if side_u == "YES":
+        book_side = "bid"
+        yes_cents = float(side_price_cents)
+    elif side_u == "NO":
+        book_side = "ask"
+        yes_cents = 100.0 - float(side_price_cents)
+    else:
+        raise ValueError(f"side must be YES or NO, got {side!r}")
+
+    return {
+        "ticker": ticker,
+        "client_order_id": client_order_id or str(uuid.uuid4()),
+        "side": book_side,
+        "count": _fp_count(contracts),
+        "price": _fp_dollars_from_cents(yes_cents),
+        "time_in_force": time_in_force,
+        "self_trade_prevention_type": "taker_at_cross",
+    }
+
+
+def filled_contract_count(order_resp: dict[str, Any]) -> float:
+    """Parse V2 fill_count (fixed-point string) or legacy integer count."""
+    if not order_resp:
+        return 0.0
+    raw = order_resp.get("fill_count")
+    if raw is None:
+        raw = order_resp.get("count")
+    if raw is None:
+        return 0.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def place_order(
     ticker: str,
     side: str,
@@ -216,7 +287,13 @@ def place_order(
     *,
     yes_price_cents: int | None = None,
 ) -> dict[str, Any]:
-    """Place an order. No-op stub when KALSHI_PAPER_ONLY=true."""
+    """Place a live order via Create Order V2.
+
+    ``yes_price_cents`` is the *side* entry in cents (YES price for YES buys,
+    NO price for NO buys) — same convention as the legacy yes_price/no_price body.
+
+    No-op stub when KALSHI_PAPER_ONLY=true.
+    """
     import kalshi_sizing
 
     entry = float(yes_price_cents if yes_price_cents is not None else 0)
@@ -234,22 +311,40 @@ def place_order(
             contracts,
             yes_price_cents,
         )
-        return {"status": "paper_only", "ticker": ticker, "side": side, "count": contracts}
+        return {
+            "status": "paper_only",
+            "ticker": ticker,
+            "side": side,
+            "count": contracts,
+            "fill_count": _fp_count(contracts),
+        }
 
-    side_u = side.upper()
-    body: dict[str, Any] = {
-        "ticker": ticker,
-        "action": "buy",
-        "side": "yes" if side_u == "YES" else "no",
-        "count": int(contracts),
-        "type": "limit",
-    }
-    if yes_price_cents is not None:
-        if side_u == "YES":
-            body["yes_price"] = int(yes_price_cents)
-        else:
-            body["no_price"] = int(yes_price_cents)
-    return request("POST", "/portfolio/orders", json_body=body, auth=True)
+    if yes_price_cents is None:
+        return {
+            "status": "rejected",
+            "error": "missing side price",
+            "ticker": ticker,
+        }
+
+    body = build_order_v2_body(
+        ticker,
+        side,
+        contracts,
+        side_price_cents=float(yes_price_cents),
+    )
+    logger.info(
+        "Live order V2 %s %s x%s price=%s (client_order_id=%s)",
+        ticker,
+        body["side"],
+        body["count"],
+        body["price"],
+        body["client_order_id"],
+    )
+    resp = request("POST", "/portfolio/events/orders", json_body=body, auth=True)
+    if isinstance(resp, dict):
+        resp.setdefault("client_order_id", body["client_order_id"])
+        resp.setdefault("ticker", ticker)
+    return resp
 
 
 def get_balance() -> dict[str, Any]:
