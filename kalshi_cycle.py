@@ -84,6 +84,8 @@ def settle_due() -> list[dict[str, Any]]:
                     or None,
                     result=str(result),
                 )
+            except ImportError:
+                pass
             except Exception:
                 logger.exception("Result archive record failed for %s", ticker)
             try:
