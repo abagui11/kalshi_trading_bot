@@ -49,4 +49,4 @@ python -c "from kalshi_cycle import run_once; import json; print(json.dumps(run_
 - `KALSHI_PAPER_ONLY=true` until Gate 3 paper soak passes.
 - Secrets live in `secrets/` and `.env` (gitignored).
 - Do not reuse the spot bot Telegram token or `ledger.db`.
-- Default `ENABLED_BOTS=adverse`, `HTF_REFRESH_MODE=once_per_window` (see `.env.example`).
+- Default `ENABLED_BOTS=adverse`, `HTF_REFRESH_MODE=every_near_tick` (see `.env.example`).

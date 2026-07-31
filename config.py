@@ -131,7 +131,7 @@ ENABLED_BOTS: tuple[str, ...] = tuple(
 # Shared ICT/HTF Claude refresh policy (see kalshi_cycle._should_refresh_htf).
 # every_near_tick | once_per_window | ttl_event
 HTF_REFRESH_MODE: str = (
-    (_optional("HTF_REFRESH_MODE") or "once_per_window").strip().lower()
+    (_optional("HTF_REFRESH_MODE") or "every_near_tick").strip().lower()
 )
 HTF_BIAS_TTL_SEC: int = int(os.getenv("HTF_BIAS_TTL_SEC", "3600") or "3600")
 HTF_M5_MOVE_PCT: float = float(os.getenv("HTF_M5_MOVE_PCT", "0.20") or "0.20")

@@ -5,6 +5,33 @@ adverse arms from. Tag **ADVERSE_SENSITIVE: yes** when that applies.
 
 ---
 
+## 2026-07-30 — Restore paper-era HTF refresh cadence
+
+**ADVERSE_SENSITIVE:** yes  
+**Risk:** low–med (adverse arm rules unchanged; Claude HTF refreshes ~2–3× more often → higher API $)
+
+### What changed
+- `HTF_REFRESH_MODE=every_near_tick` again (paper-soak cadence).
+- Repo default / `.env.example` match paper era (was `once_per_window` cost cut).
+- Still `ENABLED_BOTS=adverse` — no control/lottery re-enable.
+
+### What did NOT change
+- `strategies/adverse.py` arm / excursion / max entry / coinflip band
+- Live notional caps (`KALSHI_MAX_NOTIONAL_USD`)
+
+### Rollback
+```
+HTF_REFRESH_MODE=once_per_window
+systemctl restart kalshi-agent.service
+```
+
+### Soak checks
+- `htf_refresh_reason=forced` on near ticks (not only `window_first` / `reuse`)
+- Claude $ vs prior ~$30/day once_per_window baseline
+- Adverse WR / mix after ~40 fills
+
+---
+
 ## 2026-07-28 — Live sizing hard caps + dashboard live/archive
 
 **ADVERSE_SENSITIVE:** yes  
