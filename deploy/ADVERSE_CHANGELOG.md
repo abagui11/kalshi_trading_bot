@@ -5,6 +5,37 @@ adverse arms from. Tag **ADVERSE_SENSITIVE: yes** when that applies.
 
 ---
 
+## 2026-08-04 — Live-soak entry filters (min entry / max mid-imp / min arm)
+
+**ADVERSE_SENSITIVE:** yes  
+**Risk:** med (fewer fills; filters tuned on Jul 29–Aug 4 live book vs Jul 23–28 paper)
+
+### What changed
+- `ADVERSE_MIN_ENTRY_CENTS=15` — skip lottery-cheap tickets after excursion.
+- `ADVERSE_MAX_MID_IMPROVEMENT_CENTS=15` — skip blow-off mid cheapening (trend, not wick).
+- `ADVERSE_MIN_ARM_SIDE_MID_CENTS=35` — do not arm when the side is already cheap.
+- No YES/bullish hard block (vision/HTF alignment still under review).
+
+### What did NOT change
+- `ADVERSE_MIN_EXCURSION_PCT` / min mid-improvement trigger thresholds
+- HTF refresh mode, sizing caps, paper/live switch
+
+### Rollback
+```
+# bot_config.py — restore prior constants or set:
+ADVERSE_MIN_ENTRY_CENTS = 0
+ADVERSE_MAX_MID_IMPROVEMENT_CENTS = 100
+ADVERSE_MIN_ARM_SIDE_MID_CENTS = 0
+systemctl restart kalshi-agent.service
+```
+
+### Soak checks
+- Skip codes `adverse_too_cheap` / `adverse_mid_blowoff` / `adverse_arm_too_cheap` appear in decisions
+- Fewer sub-15¢ fills; avg entry rises toward ~20–30¢
+- Adverse WR / daily PnL vs prior live baseline after ~40 fills
+
+---
+
 ## 2026-07-30 — Restore paper-era HTF refresh cadence
 
 **ADVERSE_SENSITIVE:** yes  

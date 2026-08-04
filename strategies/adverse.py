@@ -75,7 +75,27 @@ class AdverseStrategy:
             # Arm only when we have a fresh bias (typically near decision).
             if not ctx.near_decision and htf is None:
                 return None
-            # Do not arm into an already-cheap coinflip-avoiding fill — wait for adverse.
+            # Do not arm when the side is already cheap — late arms chase finished moves.
+            min_arm = float(bot_config.ADVERSE_MIN_ARM_SIDE_MID_CENTS)
+            if side_mid < min_arm:
+                return kalshi_finalize.make_skip(
+                    rationale=(
+                        f"adverse: not arming {side} at side mid {side_mid:.1f}¢ "
+                        f"(need ≥{min_arm:.0f}¢ so a later wick can cheapen into the "
+                        f"{bot_config.ADVERSE_MIN_ENTRY_CENTS:.0f}–"
+                        f"{bot_config.ADVERSE_MAX_ENTRY_CENTS:.0f}¢ band)"
+                    ),
+                    base=base,
+                    htf_bias=htf_bias,
+                    setup_tags=["adverse", "arm_too_cheap"],
+                    skip_codes=["adverse_arm_too_cheap"],
+                    structure_chart_path=(htf.structure_chart_path if htf else None),
+                    entry_chart_path=(htf.entry_chart_path if htf else None),
+                    ict_action=(htf.ict_action if htf else None),
+                    ict_bias=ict_bias,
+                    trigger_type="adverse",
+                    trigger_name="wick_hunt_arm",
+                )
             paper.set_window_arm(
                 bot_id=self.bot_id,
                 market_ticker=ctx.market_ticker,
@@ -154,6 +174,36 @@ class AdverseStrategy:
                 htf_bias=str(arm.get("htf_bias") or htf_bias),
                 setup_tags=["adverse", "excursion_rich"],
                 skip_codes=["adverse_still_rich"],
+                trigger_type="adverse",
+                trigger_name="wick_hunt",
+            )
+
+        min_entry = float(bot_config.ADVERSE_MIN_ENTRY_CENTS)
+        if side_mid < min_entry:
+            return kalshi_finalize.make_skip(
+                rationale=(
+                    f"adverse excursion seen but side mid {side_mid:.1f}¢ "
+                    f"< {min_entry:.0f}¢ min entry (lottery-cheap / trend trap)"
+                ),
+                base=base,
+                htf_bias=str(arm.get("htf_bias") or htf_bias),
+                setup_tags=["adverse", "too_cheap"],
+                skip_codes=["adverse_too_cheap"],
+                trigger_type="adverse",
+                trigger_name="wick_hunt",
+            )
+
+        max_mid_imp = float(bot_config.ADVERSE_MAX_MID_IMPROVEMENT_CENTS)
+        if mid_improvement is not None and mid_improvement > max_mid_imp:
+            return kalshi_finalize.make_skip(
+                rationale=(
+                    f"adverse: mid cheapened {mid_improvement:.1f}¢ from arm "
+                    f"(>{max_mid_imp:.0f}¢ max) — treat as trend, not wick"
+                ),
+                base=base,
+                htf_bias=str(arm.get("htf_bias") or htf_bias),
+                setup_tags=["adverse", "mid_blowoff"],
+                skip_codes=["adverse_mid_blowoff"],
                 trigger_type="adverse",
                 trigger_name="wick_hunt",
             )

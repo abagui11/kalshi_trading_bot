@@ -148,8 +148,11 @@ LOTTERY_DEPLOY_PCT = 0.05
 
 # Adverse / wick-hunt: enter after move against shared bias.
 ADVERSE_MAX_ENTRY_CENTS = 40.0
+ADVERSE_MIN_ENTRY_CENTS = 15.0  # skip lottery-cheap tickets (live 0–15¢ bled)
 ADVERSE_MIN_EXCURSION_PCT = 0.05  # min |spot vs strike| adverse move to arm fill
 ADVERSE_MIN_MID_IMPROVEMENT_CENTS = 5.0  # side mid must cheapen vs arm mid
+ADVERSE_MAX_MID_IMPROVEMENT_CENTS = 15.0  # skip blow-off cheapening (trend, not wick)
+ADVERSE_MIN_ARM_SIDE_MID_CENTS = 35.0  # do not arm when side already cheap
 # Stub for later: allow last-3m block exception on strong HTF + cheap underdog.
 STRONG_SIGNAL_OVERRIDE = False
 
