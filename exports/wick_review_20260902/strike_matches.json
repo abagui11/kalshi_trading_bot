@@ -1,0 +1,256 @@
+[
+ {
+  "label": "T1 BTC Up 28c",
+  "pid": "BTC-USD",
+  "side": "UP",
+  "strike": 77353.35,
+  "entry_cents": 28.0,
+  "matches": [
+   {
+    "utc": "2026-09-02T18:00:00+00:00",
+    "open": 77351.46,
+    "settle_close": 77382.21,
+    "win_hi": 77421.88,
+    "win_lo": 77289.07,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T19:00:00+00:00",
+    "open": 77345.92,
+    "settle_close": 77359.01,
+    "win_hi": 77376.5,
+    "win_lo": 77295.65,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T19:15:00+00:00",
+    "open": 77359.01,
+    "settle_close": 77138.83,
+    "win_hi": 77398.12,
+    "win_lo": 77138.83,
+    "would_win": false
+   },
+   {
+    "utc": "2026-09-02T20:30:00+00:00",
+    "open": 77348.7,
+    "settle_close": 77338.16,
+    "win_hi": 77455.54,
+    "win_lo": 77286.55,
+    "would_win": false
+   }
+  ]
+ },
+ {
+  "label": "T2 BTC Down 20.4c",
+  "pid": "BTC-USD",
+  "side": "DOWN",
+  "strike": 77293.99,
+  "entry_cents": 20.4,
+  "matches": [
+   {
+    "utc": "2026-09-02T14:15:00+00:00",
+    "open": 77294.46,
+    "settle_close": 77297.25,
+    "win_hi": 77449.09,
+    "win_lo": 77185.69,
+    "would_win": false
+   },
+   {
+    "utc": "2026-09-02T14:30:00+00:00",
+    "open": 77296.99,
+    "settle_close": 77284.88,
+    "win_hi": 77347.92,
+    "win_lo": 77063.33,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T21:15:00+00:00",
+    "open": 77299.35,
+    "settle_close": 77254.51,
+    "win_hi": 77310.0,
+    "win_lo": 77219.98,
+    "would_win": true
+   }
+  ]
+ },
+ {
+  "label": "T3 BTC Up 20.9c",
+  "pid": "BTC-USD",
+  "side": "UP",
+  "strike": 77179.48,
+  "entry_cents": 20.9,
+  "matches": []
+ },
+ {
+  "label": "T4 BTC Up 29c",
+  "pid": "BTC-USD",
+  "side": "UP",
+  "strike": 77203.93,
+  "entry_cents": 29.0,
+  "matches": [
+   {
+    "utc": "2026-09-02T19:45:00+00:00",
+    "open": 77206.74,
+    "settle_close": 77316.03,
+    "win_hi": 77324.64,
+    "win_lo": 77114.71,
+    "would_win": true
+   }
+  ]
+ },
+ {
+  "label": "T5 BTC Up 37c",
+  "pid": "BTC-USD",
+  "side": "UP",
+  "strike": 77344.21,
+  "entry_cents": 37.0,
+  "matches": [
+   {
+    "utc": "2026-09-02T18:00:00+00:00",
+    "open": 77351.46,
+    "settle_close": 77382.21,
+    "win_hi": 77421.88,
+    "win_lo": 77289.07,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T19:00:00+00:00",
+    "open": 77345.92,
+    "settle_close": 77359.01,
+    "win_hi": 77376.5,
+    "win_lo": 77295.65,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T20:30:00+00:00",
+    "open": 77348.7,
+    "settle_close": 77338.16,
+    "win_hi": 77455.54,
+    "win_lo": 77286.55,
+    "would_win": false
+   }
+  ]
+ },
+ {
+  "label": "T6 ETH Up 38.6c",
+  "pid": "ETH-USD",
+  "side": "UP",
+  "strike": 2390.07,
+  "entry_cents": 38.6,
+  "matches": [
+   {
+    "utc": "2026-09-02T16:00:00+00:00",
+    "open": 2389.9,
+    "settle_close": 2393.18,
+    "win_hi": 2395.61,
+    "win_lo": 2385.6,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T18:45:00+00:00",
+    "open": 2391.14,
+    "settle_close": 2394.03,
+    "win_hi": 2395.17,
+    "win_lo": 2389.47,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T20:30:00+00:00",
+    "open": 2390.71,
+    "settle_close": 2390.46,
+    "win_hi": 2395.32,
+    "win_lo": 2389.61,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T20:45:00+00:00",
+    "open": 2390.0,
+    "settle_close": 2392.81,
+    "win_hi": 2394.96,
+    "win_lo": 2387.97,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T21:30:00+00:00",
+    "open": 2390.23,
+    "settle_close": 2393.42,
+    "win_hi": 2394.28,
+    "win_lo": 2388.4,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-02T22:00:00+00:00",
+    "open": 2389.37,
+    "settle_close": 2384.02,
+    "win_hi": 2389.48,
+    "win_lo": 2381.04,
+    "would_win": false
+   },
+   {
+    "utc": "2026-09-03T00:00:00+00:00",
+    "open": 2390.81,
+    "settle_close": 2386.69,
+    "win_hi": 2394.46,
+    "win_lo": 2386.69,
+    "would_win": false
+   },
+   {
+    "utc": "2026-09-03T01:15:00+00:00",
+    "open": 2389.6,
+    "settle_close": 2391.67,
+    "win_hi": 2391.74,
+    "win_lo": 2385.2,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-03T02:15:00+00:00",
+    "open": 2389.93,
+    "settle_close": 2394.83,
+    "win_hi": 2395.77,
+    "win_lo": 2387.99,
+    "would_win": true
+   }
+  ]
+ },
+ {
+  "label": "T7 BTC Down 21c",
+  "pid": "BTC-USD",
+  "side": "DOWN",
+  "strike": 77367.46,
+  "entry_cents": 21.0,
+  "matches": []
+ },
+ {
+  "label": "T8 BTC Up 32.5c",
+  "pid": "BTC-USD",
+  "side": "UP",
+  "strike": 77327.8,
+  "entry_cents": 32.5,
+  "matches": [
+   {
+    "utc": "2026-09-02T15:45:00+00:00",
+    "open": 77331.1,
+    "settle_close": 77253.04,
+    "win_hi": 77344.67,
+    "win_lo": 77084.28,
+    "would_win": false
+   },
+   {
+    "utc": "2026-09-02T20:15:00+00:00",
+    "open": 77335.37,
+    "settle_close": 77348.7,
+    "win_hi": 77436.52,
+    "win_lo": 77176.04,
+    "would_win": true
+   },
+   {
+    "utc": "2026-09-03T02:00:00+00:00",
+    "open": 77321.27,
+    "settle_close": 77459.94,
+    "win_hi": 77465.83,
+    "win_lo": 77200.82,
+    "would_win": true
+   }
+  ]
+ }
+]

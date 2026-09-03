@@ -157,3 +157,21 @@ HTF_M5_MOVE_PCT: float = float(os.getenv("HTF_M5_MOVE_PCT", "0.20") or "0.20")
 HTF_REFRESH_ON_H1_CLOSE: bool = _optional_bool(
     "HTF_REFRESH_ON_H1_CLOSE", default=True
 )
+
+# --- EVA brain (hub Intelligence API) — zero-Claude bias source for eva_wick ---
+# e.g. https://dashboard.eva.finance ; token must match hub SERVICE_API_TOKENS.
+INTELLIGENCE_API_URL: str | None = _optional("INTELLIGENCE_API_URL")
+INTELLIGENCE_SERVICE_TOKEN: str | None = _optional("INTELLIGENCE_SERVICE_TOKEN")
+# Fail closed when the newest stance is older than this (minutes).
+EVA_STANCE_MAX_AGE_MIN: float = float(
+    os.getenv("EVA_STANCE_MAX_AGE_MIN", "90") or "90"
+)
+# Early take-profit: flatten when the bought side reaches entry × multiple.
+EVA_WICK_TP_MULTIPLE: float = float(
+    os.getenv("EVA_WICK_TP_MULTIPLE", "2.0") or "2.0"
+)
+
+# Claude-consuming side jobs — env-driven so the eva_wick profile can run
+# with zero Anthropic spend (defaults preserve legacy behavior).
+MACRO_CONTEXT_ENABLED: bool = _optional_bool("MACRO_CONTEXT_ENABLED", default=True)
+WATCHDOG_ENABLED: bool = _optional_bool("WATCHDOG_ENABLED", default=True)

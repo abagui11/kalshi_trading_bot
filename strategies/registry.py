@@ -13,15 +13,18 @@ if TYPE_CHECKING:
 def _build_registry() -> dict[str, Strategy]:
     from strategies.adverse import AdverseStrategy
     from strategies.control import ControlStrategy
+    from strategies.eva_wick import EvaWickStrategy
     from strategies.lottery import LotteryStrategy
 
     control = ControlStrategy()
     lottery = LotteryStrategy()
     adverse = AdverseStrategy()
+    eva_wick = EvaWickStrategy()
     return {
         control.bot_id: control,
         lottery.bot_id: lottery,
         adverse.bot_id: adverse,
+        eva_wick.bot_id: eva_wick,
     }
 
 

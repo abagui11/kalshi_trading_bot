@@ -1,0 +1,66 @@
+[
+ {
+  "key": "t1",
+  "btc_net_1h_pct": 0.274,
+  "btc_range_1h_pct": 0.596,
+  "quarter_ok": true,
+  "price_ok": true,
+  "window_et": "14:00-14:15 ET"
+ },
+ {
+  "key": "t2",
+  "btc_net_1h_pct": 0.007,
+  "btc_range_1h_pct": 0.31,
+  "quarter_ok": true,
+  "price_ok": true,
+  "window_et": "14:45-15:00 ET"
+ },
+ {
+  "key": "t3",
+  "btc_net_1h_pct": -0.361,
+  "btc_range_1h_pct": 0.376,
+  "quarter_ok": false,
+  "price_ok": true,
+  "window_et": "15:30-15:45 ET"
+ },
+ {
+  "key": "t4",
+  "btc_net_1h_pct": -0.097,
+  "btc_range_1h_pct": 0.401,
+  "quarter_ok": true,
+  "price_ok": true,
+  "window_et": "15:45-16:00 ET"
+ },
+ {
+  "key": "t5",
+  "btc_net_1h_pct": 0.17,
+  "btc_range_1h_pct": 0.513,
+  "quarter_ok": true,
+  "price_ok": false,
+  "window_et": "16:45-17:00 ET"
+ },
+ {
+  "key": "t6",
+  "btc_net_1h_pct": 0.17,
+  "btc_range_1h_pct": 0.513,
+  "quarter_ok": true,
+  "price_ok": false,
+  "window_et": "16:45-17:00 ET"
+ },
+ {
+  "key": "t7",
+  "btc_net_1h_pct": 0.512,
+  "btc_range_1h_pct": 0.618,
+  "quarter_ok": false,
+  "price_ok": true,
+  "window_et": "21:30-21:45 ET"
+ },
+ {
+  "key": "t8",
+  "btc_net_1h_pct": 0.382,
+  "btc_range_1h_pct": 0.754,
+  "quarter_ok": true,
+  "price_ok": true,
+  "window_et": "22:00-22:15 ET"
+ }
+]

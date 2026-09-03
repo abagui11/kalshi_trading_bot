@@ -71,7 +71,8 @@ PRODUCT_OB_MIN_WIDTH_PCT: dict[str, float] = {
 PAPER_EPOCH_LABEL = "kalshi_15m_ict"
 
 # Kalshi LTF scanner between 15m marks (shadow until execute enabled).
-WATCHDOG_ENABLED = True
+# Env-driven (WATCHDOG_ENABLED); watchdog fills as bot_id=control.
+WATCHDOG_ENABLED = config.WATCHDOG_ENABLED
 WATCHDOG_INTERVAL_SEC = 60
 WATCHDOG_COOLDOWN_SEC = 30 * 60
 # Watchdog can paper-fill when triggers + edge gates pass.
@@ -80,7 +81,8 @@ WATCHDOG_EXECUTE_META_KEY = "watchdog_execute_enabled"
 WATCHDOG_ALLOW_SHORTS = True
 SCALE_IN_MIN_R = 0.5
 
-MACRO_CONTEXT_ENABLED = True
+# Env-driven (MACRO_CONTEXT_ENABLED); macro classify spends Claude tokens.
+MACRO_CONTEXT_ENABLED = config.MACRO_CONTEXT_ENABLED
 MACRO_POLL_INTERVAL_SEC = 300
 MACRO_MIN_SEVERITY_INJECT = 3
 MACRO_PULSE_MIN_SEVERITY = 4
@@ -141,6 +143,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "control": "Control (conviction ICT)",
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
+    "eva_wick": "EVA wick (fade/overshoot)",
 }
 
 # Shared ICT/HTF Claude refresh (aliases to config).
@@ -168,6 +171,29 @@ ADVERSE_MAX_MID_IMPROVEMENT_CENTS = 15.0  # skip blow-off cheapening (trend, not
 ADVERSE_MIN_ARM_SIDE_MID_CENTS = 35.0  # do not arm when side already cheap
 # Stub for later: allow last-3m block exception on strong HTF + cheap underdog.
 STRONG_SIGNAL_OVERRIDE = False
+
+# EVA wick bot (zero-Claude; bias from hub intel_stances via eva_intel).
+# Boss rule 1: never buy above 33¢ — soft band to 40¢ at reduced size.
+EVA_WICK_MAX_ENTRY_CENTS = 33.0
+EVA_WICK_SOFT_MAX_ENTRY_CENTS = 40.0
+EVA_WICK_MIN_ENTRY_CENTS = 15.0  # lottery-cheap usually = trend, not wick
+# Boss rule 3: BTC trailing-hour net move; soft above 0.5%, hard skip above 0.75%.
+EVA_WICK_BTC_MOVE_SOFT_PCT = 0.5
+EVA_WICK_BTC_MOVE_HARD_PCT = 0.75
+# Min |spot vs strike| excursion (%) to call it a pop/flush worth fading.
+EVA_WICK_MIN_EXCURSION_PCT = 0.03
+# Session-range location bands (trailing ~6h): edges where wicks are bought.
+EVA_WICK_RANGE_EDGE_LOW = 0.30
+EVA_WICK_RANGE_EDGE_HIGH = 0.70
+# 24h range wider than this → not the quiet regime the strategy wants (soft).
+EVA_WICK_MAX_DAY_RANGE_PCT = 4.0
+# M15 stance confidence needed for the buy_overshoot pattern / conviction boost.
+EVA_WICK_MIN_M15_CONF = 0.55
+EVA_WICK_STRONG_M15_CONF = 0.65
+# Soft-gate size multiplier and priority boost (last-15 window / M15 conviction).
+EVA_WICK_SOFT_FACTOR = 0.5
+EVA_WICK_PRIORITY_BOOST = 1.25
+EVA_WICK_TP_MULTIPLE = config.EVA_WICK_TP_MULTIPLE
 
 
 def qty_caps(product_id: str) -> tuple[float, float]:
