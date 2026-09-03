@@ -19,7 +19,8 @@ PRODUCT_TO_COINBASE: dict[str, str] = {
 
 # When True, Telegram only gets DMs on real paper trades (not skips).
 # Default False: operator always sees skip rationales (ICT port requirement).
-BROADCAST_ONLY_TRADES = False
+# Env-driven so the eva_wick product channel stays trade-only.
+BROADCAST_ONLY_TRADES = config.BROADCAST_ONLY_TRADES
 
 # Pre-broadcast audit refine loop (spot + Kalshi ICT rationale critic).
 MAX_REFINE_PASSES = 3

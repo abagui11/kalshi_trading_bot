@@ -175,3 +175,5 @@ EVA_WICK_TP_MULTIPLE: float = float(
 # with zero Anthropic spend (defaults preserve legacy behavior).
 MACRO_CONTEXT_ENABLED: bool = _optional_bool("MACRO_CONTEXT_ENABLED", default=True)
 WATCHDOG_ENABLED: bool = _optional_bool("WATCHDOG_ENABLED", default=True)
+# True = Telegram sees only trades (+ TP/settles), not skip cards.
+BROADCAST_ONLY_TRADES: bool = _optional_bool("BROADCAST_ONLY_TRADES", default=False)

@@ -344,6 +344,26 @@ class EvaWickStrategy:
         )
         sug.bot_id = self.bot_id
         if sug.is_trade():
+            # Broadcast chart: reconstructed H1/M15/M5 with order blocks and
+            # the EVA stances in the header (structure slot -> sent first).
+            try:
+                import eva_charts
+
+                sug.structure_chart_path = eva_charts.build_eva_entry_chart(
+                    product_id=ctx.product_id,
+                    coinbase=ctx.coinbase,
+                    side=side,
+                    entry_side_cents=side_mid,
+                    strike=float(ctx.strike),
+                    expiry_ts=str(ctx.expiry_ts),
+                    stances=stances,
+                    pattern=pattern,
+                    wick_line=wick_line,
+                    session_pos=session_pos,
+                    btc_move=btc_move,
+                )
+            except Exception:
+                logger.exception("eva_wick: entry chart build failed")
             paper.set_window_arm(
                 bot_id=self.bot_id,
                 market_ticker=ctx.market_ticker,

@@ -41,7 +41,7 @@ def _fetch_latest() -> dict[str, Any] | None:
         resp = requests.get(
             f"{url.rstrip('/')}/api/v1/intelligence/latest",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10,
+            timeout=20,
         )
         resp.raise_for_status()
         return resp.json()
