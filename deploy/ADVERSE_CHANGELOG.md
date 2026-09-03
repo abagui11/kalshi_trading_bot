@@ -5,6 +5,43 @@ adverse arms from. Tag **ADVERSE_SENSITIVE: yes** when that applies.
 
 ---
 
+## 2026-08-04 — Conviction product path (control every 15m)
+
+**ADVERSE_SENSITIVE:** yes (adverse no longer default entry; becomes size boost only)  
+**Risk:** med–high (trades every window; sizing up to 15% book; macro may flatten)
+
+### What changed
+- Default `ENABLED_BOTS=control` — near-decision enter every window from vision/LLM.
+- Soft `no_trade` / critic downgrade → HTF/market lean at low conviction (not skip).
+- Conviction × agree/contra deploy matrix; `KALSHI_MAX_DEPLOY_PCT=0.15` hard cap.
+- Adverse cheapness → size multiplier only (`strategies/adverse_boost.py`).
+- Macro RSS poll re-enabled; mid-block pulse may early-flatten contradicted opens.
+- Dashboard journal pagination + conviction metadata.
+- Caps: `KALSHI_MAX_CONTRACTS=100`, `KALSHI_MAX_NOTIONAL_USD=0` (deploy% governs).
+
+### Env patch
+```
+python deploy/patch_conviction_env.py
+# then restart kalshi-agent (+ dashboard)
+```
+
+### Rollback
+```
+ENABLED_BOTS=adverse
+KALSHI_MAX_CONTRACTS=5
+KALSHI_MAX_NOTIONAL_USD=5
+# unset or ignore KALSHI_MAX_DEPLOY_PCT
+systemctl restart kalshi-agent.service
+```
+
+### Soak checks
+- Near-decision fills most windows (skip codes only hard safety)
+- Journal shows conviction / agree|contra / deploy%
+- No single fill notional > 15% of bankroll
+- Macro pulse Telegram on high-sev; flatten only when bias contradicts open side
+
+---
+
 ## 2026-08-04 — Live-soak entry filters (min entry / max mid-imp / min arm)
 
 **ADVERSE_SENSITIVE:** yes  

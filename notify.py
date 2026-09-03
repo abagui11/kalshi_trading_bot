@@ -81,7 +81,10 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
             f"Kalshi YES mid: {mid}",
             f"Model fair YES: {fair} (edge {edge_s}, min {config.KALSHI_MIN_EDGE_CENTS:.0f}¢)",
             f"Sizing: bankroll ${config.KALSHI_BANKROLL_USD:.0f} · "
-            f"deploy {config.KALSHI_DEPLOY_PCT*100:.0f}%/trade · max {config.KALSHI_MAX_CONTRACTS} ct",
+            f"deploy {(suggestion.deploy_pct if suggestion.deploy_pct is not None else config.KALSHI_DEPLOY_PCT)*100:.1f}%/trade"
+            f"{f' · {suggestion.conviction}' if suggestion.conviction else ''}"
+            f"{' · contra' if suggestion.market_agree is False else (' · agree' if suggestion.market_agree else '')}"
+            f" · max {config.KALSHI_MAX_DEPLOY_PCT*100:.0f}% book",
             f"Expiry / close: {expiry}",
             f"Paper equity: ${stats['equity_usd']:.2f} | open {stats['open_count']} | "
             f"{stats['wins']}W/{stats['losses']}L",
@@ -221,3 +224,65 @@ def broadcast_kalshi_trade(
 
 def broadcast_settle(closed: dict) -> None:
     broadcast_plain_text(format_settle_card(closed))
+
+
+def send_macro_pulse_alert(
+    event: dict,
+    advisory: dict,
+    text_summary: str,
+    *,
+    flattened: list | None = None,
+) -> None:
+    """Telegram alert for mid-block macro news (+ optional early flatten)."""
+    sev = event.get("severity")
+    bias = event.get("eth_bias") or "neutral"
+    title = str(event.get("title") or "")[:200]
+    rec = str(advisory.get("recommendation") or "hold")
+    lines = [
+        "Kalshi 15m MACRO PULSE",
+        f"Severity: {sev} | Bias: {bias} | Rec: {rec}",
+        f"Headline: {title}",
+        "",
+        (text_summary or "").strip() or "(no advisory)",
+    ]
+    if flattened:
+        lines.append("")
+        lines.append(f"Flattened {len(flattened)} position(s):")
+        for c in flattened:
+            lines.append(
+                f"  · {c.get('product_id')} {c.get('side')} "
+                f"x{c.get('contracts')} pnl ${float(c.get('pnl_usd') or 0):+.2f} "
+                f"{c.get('market_ticker')}"
+            )
+    broadcast_plain_text("\n".join(lines))
+
+
+def send_macro_pulse_alert(
+    event: dict,
+    advisory: dict,
+    text_summary: str,
+    *,
+    flattened: list | None = None,
+) -> None:
+    """Telegram alert for mid-block macro news (+ optional early flatten)."""
+    sev = event.get("severity")
+    bias = event.get("eth_bias") or "neutral"
+    title = str(event.get("title") or "")[:200]
+    rec = str(advisory.get("recommendation") or "hold")
+    lines = [
+        "Kalshi 15m MACRO PULSE",
+        f"Severity: {sev} | Bias: {bias} | Rec: {rec}",
+        f"Headline: {title}",
+        "",
+        text_summary.strip() or "(no advisory)",
+    ]
+    if flattened:
+        lines.append("")
+        lines.append(f"Flattened {len(flattened)} position(s):")
+        for c in flattened:
+            lines.append(
+                f"  · {c.get('product_id')} {c.get('side')} "
+                f"x{c.get('contracts')} pnl ${float(c.get('pnl_usd') or 0):+.2f} "
+                f"{c.get('market_ticker')}"
+            )
+    broadcast_plain_text("\n".join(lines))

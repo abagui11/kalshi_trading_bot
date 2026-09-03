@@ -135,7 +135,13 @@
   </style>
 </head>
 <body>
-  <h1>Kalshi 15m · {{ 'LIVE' if not status.paper_only else 'PAPER' }}</h1>
+  <h1>Kalshi 15m · {{ 'PAUSED' if status.paused else ('LIVE' if not status.paper_only else 'PAPER') }}</h1>
+  {% if status.paused and status.paused_note %}
+  <div class="stat" style="border-color:#c45c26; margin-bottom:1rem;">
+    <div class="label">Status</div>
+    <div class="rationale" style="margin:0;">{{ status.paused_note }}</div>
+  </div>
+  {% endif %}
   <p class="sub">
     <strong>{{ status.mode | upper }}</strong> · {{ status.env }} ·
     primary={{ status.primary_bot }} ·
@@ -281,6 +287,7 @@
     <a href="/?bot={{ active_bot }}&amp;filter=all" class="{{ 'active' if journal_filter == 'all' else '' }}">All</a>
     <a href="/?bot={{ active_bot }}&amp;filter=trades" class="{{ 'active' if journal_filter == 'trades' else '' }}">Trades</a>
     <a href="/?bot={{ active_bot }}&amp;filter=skips" class="{{ 'active' if journal_filter == 'skips' else '' }}">Skips only</a>
+    <span class="meta"> · {{ journal_total }} total · page {{ journal_page }}/{{ journal_total_pages }}</span>
   </div>
   {% for d in journal %}
   <div class="trade-card {{ 'trade' if d.is_trade else 'skip' }}">
@@ -288,6 +295,8 @@
       <strong>{{ d.product_id }} {{ d.side }}</strong>
       <span class="meta">{{ d.ts }}</span>
       <span class="badge">{{ d.bot_id }}</span>
+      {% if d.conviction %}<span class="badge">{{ d.conviction }}{% if d.market_agree is not none %} · {{ 'agree' if d.market_agree else 'contra' }}{% endif %}</span>{% endif %}
+      {% if d.deploy_pct is not none %}<span class="meta">{{ "%.1f"|format(d.deploy_pct * 100) }}%</span>{% endif %}
       <span class="meta">{{ d.trigger_type or '' }}{% if d.trigger_name %} / {{ d.trigger_name }}{% endif %}</span>
       {% if d.htf_bias %}<span class="badge">htf:{{ d.htf_bias }}</span>{% endif %}
       {% for tag in (d.setup_tags or [])[:5] %}
@@ -319,6 +328,10 @@
       <div class="meta">
         mid {{ d.yes_mid_cents }} · fair {{ d.fair_yes_cents }} ·
         gate {{ d.gate_outcome or '—' }} ·
+        {% if d.conviction %}conviction {{ d.conviction }} ·{% endif %}
+        {% if d.market_agree is not none %}{{ 'agree' if d.market_agree else 'contra' }} ·{% endif %}
+        {% if d.deploy_pct is not none %}deploy {{ "%.1f"|format(d.deploy_pct * 100) }}% ·{% endif %}
+        {% if d.adverse_boost is not none %}boost {{ "%.2f"|format(d.adverse_boost) }}× ·{% endif %}
         {% if d.chart_read_score is not none %}chart-read {{ "%.2f"|format(d.chart_read_score) }} ·{% endif %}
         {{ d.market_ticker }}
       </div>
@@ -327,6 +340,17 @@
   {% else %}
   <p class="meta">No decisions logged yet for this bot.</p>
   {% endfor %}
+  {% if journal_total_pages > 1 %}
+  <div class="filters pagination">
+    {% if journal_has_prev %}
+    <a href="/?bot={{ active_bot }}&amp;filter={{ journal_filter }}&amp;page={{ journal_page - 1 }}">← Prev</a>
+    {% endif %}
+    <span class="meta">Page {{ journal_page }} of {{ journal_total_pages }}</span>
+    {% if journal_has_next %}
+    <a href="/?bot={{ active_bot }}&amp;filter={{ journal_filter }}&amp;page={{ journal_page + 1 }}">Next →</a>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <h2>Closed (last {{ closed_positions|length }}) · {{ active_bot }}</h2>
   <table>

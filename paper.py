@@ -394,6 +394,11 @@ def init_db() -> None:
             ("chart_read_score", "REAL"),
             ("seconds_to_expiry", "REAL"),
             ("trigger_name", "TEXT"),
+            ("conviction", "TEXT"),
+            ("market_agree", "INTEGER"),
+            ("deploy_pct", "REAL"),
+            ("adverse_boost", "REAL"),
+            ("side_source", "TEXT"),
         ):
             _ensure_column(conn, "kalshi_decisions", col, decl)
         for bot_id in _bot_ids():
@@ -858,6 +863,86 @@ def settle_position(
         return dict(closed) if closed else None
 
 
+def flatten_position_early(
+    position_id: int,
+    *,
+    exit_side_cents: float,
+    reason: str = "macro_flatten",
+) -> dict[str, Any] | None:
+    """Close an open Kalshi binary early at a side mark (not expiry settlement).
+
+    PnL = (exit − entry) × contracts in dollars. Result tagged ``flat``.
+    """
+    init_db()
+    exit_c = max(0.0, min(100.0, float(exit_side_cents)))
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ? AND status = 'open'",
+            (int(position_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        pos_bot = str(row["bot_id"] if "bot_id" in row.keys() else DEFAULT_BOT_ID)
+        side = str(row["side"]).upper()
+        contracts = int(row["contracts"])
+        entry_cents = float(row["entry_cents"])
+        payout_usd = (exit_c / 100.0) * contracts
+        pnl_usd = ((exit_c - entry_cents) / 100.0) * contracts
+        now = _now()
+        _ensure_bot_state(conn, pos_bot)
+        state = conn.execute(
+            "SELECT cash_usd, realized_pnl_usd FROM paper_state WHERE bot_id = ?",
+            (pos_bot,),
+        ).fetchone()
+        cash = float(state["cash_usd"]) if state else 0.0
+        realized = float(state["realized_pnl_usd"]) if state else 0.0
+        rationale = (str(row["rationale"] or "") + f" | {reason} @ {exit_c:.1f}¢").strip()
+        conn.execute(
+            """
+            UPDATE paper_positions
+            SET status = 'closed', result = ?, payout_usd = ?, pnl_usd = ?,
+                closed_at = ?, rationale = ?
+            WHERE id = ?
+            """,
+            ("flat", payout_usd, pnl_usd, now, rationale, int(row["id"])),
+        )
+        conn.execute(
+            """
+            UPDATE paper_state
+            SET cash_usd = ?, realized_pnl_usd = ?, updated_at = ?
+            WHERE bot_id = ?
+            """,
+            (cash + payout_usd, realized + pnl_usd, now, pos_bot),
+        )
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                bot_id, ts, event, series, market_ticker, product_id, side, contracts,
+                entry_cents, result, payout_usd, pnl_usd, rationale
+            ) VALUES (?, ?, 'flatten', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pos_bot,
+                now,
+                row["series"],
+                row["market_ticker"],
+                row["product_id"],
+                side,
+                contracts,
+                entry_cents,
+                "flat",
+                payout_usd,
+                pnl_usd,
+                rationale,
+            ),
+        )
+        conn.commit()
+        closed = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ?", (int(row["id"]),)
+        ).fetchone()
+        return dict(closed) if closed else None
+
+
 def get_closed_positions(
     limit: int = 50,
     *,
@@ -1035,7 +1120,8 @@ def log_decision(suggestion: KalshiSuggestion) -> int:
                 critic_passes, critic_findings_json, critic_downgraded,
                 would_skip_reasons, chart_path,
                 structure_chart_path, entry_chart_path, setup_tags, skip_codes,
-                chart_read_score, seconds_to_expiry, trigger_name
+                chart_read_score, seconds_to_expiry, trigger_name,
+                conviction, market_agree, deploy_pct, adverse_boost, side_source
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
@@ -1047,7 +1133,8 @@ def log_decision(suggestion: KalshiSuggestion) -> int:
                 ?, ?, ?,
                 ?, ?,
                 ?, ?, ?, ?,
-                ?, ?, ?
+                ?, ?, ?,
+                ?, ?, ?, ?, ?
             )
             """,
             (
@@ -1093,25 +1180,44 @@ def log_decision(suggestion: KalshiSuggestion) -> int:
                 suggestion.chart_read_score,
                 suggestion.seconds_to_expiry,
                 suggestion.trigger_name,
+                suggestion.conviction,
+                (
+                    None
+                    if suggestion.market_agree is None
+                    else (1 if suggestion.market_agree else 0)
+                ),
+                suggestion.deploy_pct,
+                suggestion.adverse_boost,
+                suggestion.side_source,
             ),
         )
         conn.commit()
         return int(cur.lastrowid)
 
 
-def count_decisions(*, bot_id: str | None = None) -> int:
-    """Total kalshi_decisions rows (not capped like get_decisions)."""
+def count_decisions(
+    *,
+    bot_id: str | None = None,
+    filter_mode: str = "all",
+) -> int:
+    """Total kalshi_decisions rows (optional trades/skips filter)."""
     init_db()
+    mode = (filter_mode or "all").lower()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if bot_id:
+        clauses.append("bot_id = ?")
+        params.append(bot_id)
+    if mode == "trades":
+        clauses.append("side IN ('YES', 'NO')")
+    elif mode == "skips":
+        clauses.append("side = 'SKIP'")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     with _connect() as conn:
-        if bot_id:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM kalshi_decisions WHERE bot_id = ?",
-                (bot_id,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM kalshi_decisions",
-            ).fetchone()
+        row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM kalshi_decisions{where}",
+            tuple(params),
+        ).fetchone()
         return int(row["n"] if row else 0)
 
 
@@ -1119,28 +1225,32 @@ def get_decisions(
     limit: int = 200,
     *,
     bot_id: str | None = None,
+    offset: int = 0,
+    filter_mode: str = "all",
 ) -> list[dict[str, Any]]:
     init_db()
+    mode = (filter_mode or "all").lower()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if bot_id:
+        clauses.append("bot_id = ?")
+        params.append(bot_id)
+    if mode == "trades":
+        clauses.append("side IN ('YES', 'NO')")
+    elif mode == "skips":
+        clauses.append("side = 'SKIP'")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.extend([max(0, int(limit)), max(0, int(offset))])
     with _connect() as conn:
-        if bot_id:
-            rows = conn.execute(
-                """
-                SELECT * FROM kalshi_decisions
-                WHERE bot_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (bot_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM kalshi_decisions
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(
+            f"""
+            SELECT * FROM kalshi_decisions
+            {where}
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """,
+            tuple(params),
+        ).fetchall()
         return [dict(r) for r in rows]
 
 

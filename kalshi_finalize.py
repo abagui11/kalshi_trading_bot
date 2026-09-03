@@ -27,11 +27,13 @@ def mid_too_extreme(side: str, mid: float) -> str | None:
     return None
 
 
-def size_at_entry(entry_cents: float) -> tuple[int, float]:
+def size_at_entry(
+    entry_cents: float, *, deploy_pct: float | None = None
+) -> tuple[int, float]:
     """Return (contracts, budget_usd) for intended entry price."""
     import kalshi_sizing
 
-    return kalshi_sizing.contracts_for_entry(entry_cents)
+    return kalshi_sizing.contracts_for_entry(entry_cents, deploy_pct=deploy_pct)
 
 
 def has_actionable_edge(
@@ -111,6 +113,9 @@ def finalize_directional(
     trigger_name: str | None = None,
     shadow_only: bool = False,
     skip_codes: list[str] | None = None,
+    require_edge: bool = True,
+    allow_rich: bool = False,
+    deploy_pct: float | None = None,
 ) -> KalshiSuggestion:
     """Apply shared KalshiRules gates and size a YES/NO suggestion (or skip)."""
     min_edge = float(bot_config.KALSHI_MIN_EDGE_CENTS)
@@ -121,7 +126,7 @@ def finalize_directional(
     ok_edge, edge_reason = has_actionable_edge(
         side, edge, float(mid), fair_cents, min_edge=min_edge
     )
-    if not ok_edge:
+    if require_edge and not ok_edge:
         sug = KalshiSuggestion.skip(
             rationale=f"skipped (edge filter): {edge_reason}. {trigger_reason}. {ict_rationale}",
             ict_action=ict_action,
@@ -138,6 +143,9 @@ def finalize_directional(
         sug.structure_chart_path = structure_chart_path
         sug.entry_chart_path = entry_chart_path
         return attach_htf_tags(sug, htf_bias=htf_bias, side=None)
+    if not ok_edge and not require_edge:
+        tags = tags + ["soft_edge_miss"]
+        audit["edge_soft_miss"] = edge_reason
 
     extreme = mid_too_extreme(side, float(mid))
     if extreme:
@@ -192,7 +200,7 @@ def finalize_directional(
     else:
         entry_cents = kalshi_triggers.intended_limit_cents(side, float(mid))
 
-    if entry_cents > kalshi_triggers.MAX_ENTRY_CENTS:
+    if (not allow_rich) and entry_cents > kalshi_triggers.MAX_ENTRY_CENTS:
         sug = KalshiSuggestion.skip(
             rationale=(
                 f"skipped (KalshiRules NEVER BUY >{kalshi_triggers.MAX_ENTRY_CENTS:.0f}¢): "
@@ -213,7 +221,7 @@ def finalize_directional(
         sug.entry_chart_path = entry_chart_path
         return attach_htf_tags(sug, htf_bias=htf_bias, side=None)
 
-    contracts, budget = size_at_entry(entry_cents)
+    contracts, budget = size_at_entry(entry_cents, deploy_pct=deploy_pct)
     if contracts < 1:
         sug = KalshiSuggestion.skip(
             rationale=(
@@ -334,6 +342,19 @@ def finalize_directional(
         chart_path=entry_chart_path or structure_chart_path,
         chart_read_score=audit.get("chart_read_score"),
         cycle_id=base.get("cycle_id"),
+        conviction=audit.get("conviction"),
+        market_agree=audit.get("market_agree"),
+        deploy_pct=(
+            float(deploy_pct)
+            if deploy_pct is not None
+            else (
+                float(audit["deploy_pct"])
+                if audit.get("deploy_pct") is not None
+                else None
+            )
+        ),
+        adverse_boost=audit.get("adverse_boost"),
+        side_source=audit.get("side_source"),
     )
     if base.get("bot_id"):
         sug.bot_id = str(base["bot_id"])

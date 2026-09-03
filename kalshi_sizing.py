@@ -58,12 +58,17 @@ def sizing_bankroll_usd() -> float:
         return configured
 
 
+def max_deploy_pct() -> float:
+    return max(0.0, float(getattr(bot_config, "KALSHI_MAX_DEPLOY_PCT", 0.15)))
+
+
 def contracts_for_entry(entry_cents: float, *, deploy_pct: float | None = None) -> tuple[int, float]:
     """Return (contracts, budget_usd) for a side entry price in cents."""
     bankroll = sizing_bankroll_usd()
     pct = float(bot_config.KALSHI_DEPLOY_PCT if deploy_pct is None else deploy_pct)
+    pct = min(pct, max_deploy_pct()) if max_deploy_pct() > 0 else pct
     budget = max(0.0, bankroll * pct)
-    # Also clamp budget to absolute notional ceiling.
+    # Also clamp budget to absolute notional ceiling (0 = disabled).
     budget = min(budget, max_notional_usd()) if max_notional_usd() > 0 else budget
     price = float(entry_cents) / 100.0
     cap = max_contracts_cap()

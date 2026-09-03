@@ -1,0 +1,9 @@
+PAUSED — 2026-08-04
+
+Bot stopped after conviction-path soak. Vision/Claude was failing
+(Anthropic credit balance too low), so fills fell back to sticky HTF
+bull→YES at low conviction and lost money.
+
+Trade history from this soak archived under archives/.
+Do not restart live trading until Anthropic credits are restored
+and vision is verified healthy.

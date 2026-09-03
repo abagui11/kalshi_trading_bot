@@ -32,13 +32,14 @@ def create_app() -> FastAPI:
         request: Request,
         filter: str = Query("all", alias="filter"),
         bot: str | None = Query(None),
+        page: int = Query(1, ge=1),
     ) -> HTMLResponse:
         mode = filter if filter in ("all", "trades", "skips") else "all"
         bot_id = bot if bot in bot_config.ENABLED_BOTS else None
         return templates.TemplateResponse(
             request,
             "index.html",
-            data.dashboard_context(filter_mode=mode, bot_id=bot_id),
+            data.dashboard_context(filter_mode=mode, bot_id=bot_id, page=page),
         )
 
     @app.get("/api/status")
@@ -81,15 +82,40 @@ def create_app() -> FastAPI:
     async def api_journal(
         filter: str = Query("all"),
         limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
         bot: str | None = Query(None),
     ) -> dict:
         mode = filter if filter in ("all", "trades", "skips") else "all"
         bot_id = bot if bot in bot_config.ENABLED_BOTS else None
+        payload = data.get_journal_payload(
+            limit=limit, offset=offset, filter_mode=mode, bot_id=bot_id
+        )
         return {
             "bot_id": bot_id,
-            "decisions": data.get_journal_payload(
-                limit=limit, filter_mode=mode, bot_id=bot_id
-            ),
+            "decisions": payload["items"],
+            "total": payload["total"],
+            "limit": payload["limit"],
+            "offset": payload["offset"],
+            "has_more": payload["has_more"],
+        }
+
+    @app.get("/api/trades")
+    async def api_trades(
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0),
+        bot: str | None = Query(None),
+    ) -> dict:
+        bot_id = bot if bot in bot_config.ENABLED_BOTS else None
+        payload = data.get_journal_payload(
+            limit=limit, offset=offset, filter_mode="trades", bot_id=bot_id
+        )
+        return {
+            "bot_id": bot_id,
+            "trades": payload["items"],
+            "total": payload["total"],
+            "limit": payload["limit"],
+            "offset": payload["offset"],
+            "has_more": payload["has_more"],
         }
 
     @app.get("/api/chart/file/{path:path}")

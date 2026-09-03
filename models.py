@@ -133,6 +133,12 @@ class KalshiSuggestion:
     pending_limit: bool = False
     cancel_at_ts: str | None = None
     order_id: int | None = None
+    # Conviction product sizing audit
+    conviction: str | None = None  # high | med | low
+    market_agree: bool | None = None
+    deploy_pct: float | None = None
+    adverse_boost: float | None = None
+    side_source: str | None = None  # ict | htf | market
 
     @classmethod
     def skip(
@@ -209,4 +215,9 @@ class KalshiSuggestion:
             "pending_limit": self.pending_limit,
             "cancel_at_ts": self.cancel_at_ts,
             "order_id": self.order_id,
+            "conviction": self.conviction,
+            "market_agree": self.market_agree,
+            "deploy_pct": self.deploy_pct,
+            "adverse_boost": self.adverse_boost,
+            "side_source": self.side_source,
         }

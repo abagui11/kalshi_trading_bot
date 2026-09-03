@@ -39,6 +39,23 @@ async def kalshi_watchdog_job(context) -> None:
         logger.exception("Kalshi watchdog job failed")
 
 
+async def macro_poll_job(context) -> None:
+    """RSS ingest + classify; high-sev events may pulse/flatten open books."""
+    if not bot_config.MACRO_CONTEXT_ENABLED:
+        return
+    loop = asyncio.get_running_loop()
+
+    def _run() -> None:
+        from macro.ingest import poll_feeds
+
+        poll_feeds()
+
+    try:
+        await loop.run_in_executor(None, _run)
+    except Exception:
+        logger.exception("Macro poll job failed")
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -82,6 +99,20 @@ def main() -> None:
             wd_interval,
             bot_config.watchdog_execute_enabled(),
         )
+    if bot_config.MACRO_CONTEXT_ENABLED:
+        macro_interval = max(60, int(bot_config.MACRO_POLL_INTERVAL_SEC))
+        app.job_queue.run_repeating(
+            macro_poll_job,
+            interval=macro_interval,
+            first=45,
+            name="macro_poll",
+            job_kwargs={
+                "max_instances": 1,
+                "coalesce": True,
+                "misfire_grace_time": max(60, macro_interval),
+            },
+        )
+        logger.info("Macro poll enabled every %ss", macro_interval)
     logger.info(
         "Starting Kalshi 15m bot (polling + cycle every %ss, paper_only=%s, "
         "broadcast_only_trades=%s)",

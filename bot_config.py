@@ -80,7 +80,7 @@ WATCHDOG_EXECUTE_META_KEY = "watchdog_execute_enabled"
 WATCHDOG_ALLOW_SHORTS = True
 SCALE_IN_MIN_R = 0.5
 
-MACRO_CONTEXT_ENABLED = False
+MACRO_CONTEXT_ENABLED = True
 MACRO_POLL_INTERVAL_SEC = 300
 MACRO_MIN_SEVERITY_INJECT = 3
 MACRO_PULSE_MIN_SEVERITY = 4
@@ -105,10 +105,23 @@ KALSHI_CYCLE_OFFSET_SEC = config.KALSHI_CYCLE_OFFSET_SEC
 KALSHI_PAPER_ONLY = config.KALSHI_PAPER_ONLY
 KALSHI_BANKROLL_USD = config.KALSHI_BANKROLL_USD
 KALSHI_DEPLOY_PCT = config.KALSHI_DEPLOY_PCT
+KALSHI_MAX_DEPLOY_PCT = config.KALSHI_MAX_DEPLOY_PCT
 KALSHI_MAX_NOTIONAL_USD = config.KALSHI_MAX_NOTIONAL_USD
 KALSHI_USE_LIVE_BALANCE = config.KALSHI_USE_LIVE_BALANCE
 KALSHI_LIVE_TAKE_CENTS = config.KALSHI_LIVE_TAKE_CENTS
 KALSHI_LIVE_TIME_IN_FORCE = config.KALSHI_LIVE_TIME_IN_FORCE
+
+# Conviction × agree/contra deploy matrix (fraction of book).
+CONVICTION_HIGH_SCORE = 0.75
+CONVICTION_MED_SCORE = 0.45
+CONVICTION_HIGH_AGREE_PCT = 0.08
+CONVICTION_HIGH_CONTRA_PCT = 0.12
+CONVICTION_MED_AGREE_PCT = 0.03
+CONVICTION_MED_CONTRA_PCT = 0.06
+CONVICTION_LOW_AGREE_PCT = 0.005
+CONVICTION_LOW_CONTRA_PCT = 0.015
+ADVERSE_SIZE_BOOST_MAX = 1.25
+ADVERSE_BOOST_CHEAP_SPAN_CENTS = 25.0
 
 # Main loop cadence.
 KALSHI_JOB_INTERVAL_SEC = 60
@@ -122,10 +135,10 @@ KALSHI_EXTREME_MID_CENTS = 5.0
 KALSHI_SNAPSHOT_DB: str | None = None
 
 # Multi-bot paper experiments (comma-separated bot_ids via ENABLED_BOTS env).
-# Default adverse-only so control/lottery cannot keep Claude HTF warm.
+# Default control = conviction product path (every 15m).
 ENABLED_BOTS: tuple[str, ...] = tuple(config.ENABLED_BOTS)
 BOT_DISPLAY_NAMES: dict[str, str] = {
-    "control": "Control (vanilla ICT)",
+    "control": "Control (conviction ICT)",
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
 }

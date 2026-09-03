@@ -1,0 +1,2302 @@
+{
+  "meta": {
+    "paper_file": "C:\\Users\\abagu\\OneDrive\\Documents\\Republic\\kalshi_15m_bot\\exports\\adverse_paper_archive_20260728T202611Z.csv",
+    "live_file": "C:\\Users\\abagu\\OneDrive\\Documents\\Republic\\kalshi_15m_bot\\exports\\live_trades_20260730.csv",
+    "live_env": {
+      "KALSHI_PAPER_ONLY": "false",
+      "ENABLED_BOTS": "adverse",
+      "HTF_REFRESH_MODE": "once_per_window",
+      "HTF_BIAS_TTL_SEC": "3600",
+      "HTF_M5_MOVE_PCT": "0.20",
+      "KALSHI_MAX_NOTIONAL_USD": "5"
+    },
+    "go_live_approx": "2026-07-28T20:26:11Z archive cutover",
+    "generated_at": "2026-07-30T17:03:30.856207Z"
+  },
+  "paper": {
+    "name": "paper",
+    "n": 154,
+    "wins": 49,
+    "losses": 105,
+    "wr": 0.3181818181818182,
+    "total_pnl": 85.5575,
+    "avg_pnl": 0.5555681818181818,
+    "std_pnl": 2.3257887748158512,
+    "se_pnl": 0.1874174004219067,
+    "z_vs_0": 2.964336185260859,
+    "avg_entry": 20.706818181818182,
+    "median_entry": 22.5,
+    "avg_cost": 1.0353409090909091,
+    "total_cost": 159.4425,
+    "roi_on_cost": 0.536604104928109,
+    "avg_roi": 0.7323061068507434,
+    "avg_win": 3.8846938775510202,
+    "avg_loss": -0.9980238095238095,
+    "expectancy": 0.5555681818181818,
+    "sides": {
+      "NO": 101,
+      "YES": 53
+    },
+    "products": {
+      "ETH": 110,
+      "BTC": 44
+    },
+    "gates": {
+      "skipped_llm_no_trade": 128,
+      "pass_fib": 26
+    },
+    "tclass": {
+      "wick_hunt": 154
+    },
+    "htf": {
+      "bearish": 86,
+      "mixed / conflicted": 14,
+      "bullish": 54
+    },
+    "ict": {
+      "none": 128,
+      "short": 26
+    },
+    "sessions": {
+      "us_off_hours": 36,
+      "asia": 30,
+      "us_rth": 37,
+      "weekend": 51
+    },
+    "skipped_llm_pct": 0.8311688311688312,
+    "has_llm_pct": 0.16883116883116883,
+    "audit_pct": 0.09090909090909091,
+    "mixed_htf_pct": 0.09090909090909091,
+    "avg_edge": -14.56138613861386,
+    "avg_minutes_left": 7.748366013071895,
+    "avg_mid_imp": 23.12435064935065,
+    "avg_excursion": 0.052740490705671085,
+    "avg_rat_len": 1519.7922077922078,
+    "win_avg_entry": 22.306122448979593,
+    "loss_avg_entry": 19.96047619047619,
+    "first": "2026-07-23T21:53:03Z",
+    "last": "2026-07-28T19:24:06Z"
+  },
+  "live": {
+    "name": "live",
+    "n": 15,
+    "wins": 2,
+    "losses": 13,
+    "wr": 0.13333333333333333,
+    "total_pnl": -2.265000000000002,
+    "avg_pnl": -0.15100000000000013,
+    "std_pnl": 1.5418810404363699,
+    "se_pnl": 0.39811197276286836,
+    "z_vs_0": -0.37929027592933473,
+    "avg_entry": 16.353333333333335,
+    "median_entry": 13.0,
+    "avg_cost": 0.8176666666666668,
+    "total_cost": 12.265,
+    "roi_on_cost": -0.18467183041174087,
+    "avg_roi": -0.5535714285714286,
+    "avg_win": 3.4999999999999996,
+    "avg_loss": -0.7126923076923077,
+    "expectancy": -0.15100000000000008,
+    "sides": {
+      "NO": 14,
+      "YES": 1
+    },
+    "products": {
+      "BTC": 10,
+      "ETH": 5
+    },
+    "gates": {
+      "skipped_llm_no_trade": 12,
+      "pass_fib": 3
+    },
+    "tclass": {
+      "wick_hunt": 15
+    },
+    "htf": {
+      "bearish": 14,
+      "bullish": 1
+    },
+    "ict": {
+      "none": 12,
+      "short": 3
+    },
+    "sessions": {
+      "us_rth": 3,
+      "us_off_hours": 4,
+      "asia": 8
+    },
+    "skipped_llm_pct": 0.8,
+    "has_llm_pct": 0.2,
+    "audit_pct": 0.26666666666666666,
+    "mixed_htf_pct": 0.0,
+    "avg_edge": -10.121428571428572,
+    "avg_minutes_left": 6.1,
+    "avg_mid_imp": 23.493333333333332,
+    "avg_excursion": 0.08436218246818654,
+    "avg_rat_len": 2241,
+    "win_avg_entry": 30.0,
+    "loss_avg_entry": 14.253846153846155,
+    "first": "2026-07-29T17:33:42Z",
+    "last": "2026-07-30T16:53:09Z"
+  },
+  "tests": {
+    "two_prop_wr": {
+      "p1": 0.3181818181818182,
+      "p2": 0.13333333333333333,
+      "diff": 0.18484848484848485,
+      "z": 1.4888095491809348,
+      "p": 0.136537527030834
+    },
+    "welch_pnl": {
+      "mean_a": 0.5555681818181818,
+      "mean_b": -0.15100000000000013,
+      "diff": 0.7065681818181819,
+      "t": 1.605760368876924,
+      "df": 20.799505016298788,
+      "p": 0.1083265714130504,
+      "se": 0.44002093681783844
+    },
+    "welch_pnl_pc": {
+      "mean_a": 0.11111363636363637,
+      "mean_b": -0.03020000000000002,
+      "diff": 0.1413136363636364,
+      "t": 1.6057603688769242,
+      "df": 20.79950501629878,
+      "p": 0.1083265714130504,
+      "se": 0.08800418736356769
+    },
+    "welch_roi": {
+      "mean_a": 0.7323061068507434,
+      "mean_b": -0.5535714285714286,
+      "diff": 1.285877535422172,
+      "t": 3.284140900509048,
+      "df": 36.62918194892378,
+      "p": 0.001022937667011945,
+      "se": 0.39154152467175163
+    },
+    "welch_entry": {
+      "mean_a": 20.706818181818182,
+      "mean_b": 16.353333333333335,
+      "diff": 4.353484848484847,
+      "t": 1.6017477354089424,
+      "df": 16.26746833167586,
+      "p": 0.10921140465674825,
+      "se": 2.7179591094432594
+    },
+    "bootstrap_mean_pnl_p": 0.11806666666666667,
+    "bootstrap_mean_roi_p": 0.028566666666666667,
+    "bootstrap_wr_p": 0.10226666666666667
+  },
+  "detectability": {
+    "paper_wr": 0.3181818181818182,
+    "live_n": 15,
+    "se_under_null": 0.12026142323020868,
+    "live_wr": 0.13333333333333333,
+    "z": -1.5370555235708572,
+    "note": "Under paper WR as true rate, SE of live WR at n=15; large drops can still be noise."
+  },
+  "paper_cum": [
+    {
+      "i": 1,
+      "cum": -1.475,
+      "pnl": -1.475,
+      "opened": "2026-07-23T21:53:03Z",
+      "won": false,
+      "entry": 29.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 2,
+      "cum": 2.775,
+      "pnl": 4.25,
+      "opened": "2026-07-23T22:10:03Z",
+      "won": true,
+      "entry": 15.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 3,
+      "cum": 2.6375,
+      "pnl": -0.1375,
+      "opened": "2026-07-23T22:39:03Z",
+      "won": false,
+      "entry": 2.75,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 4,
+      "cum": 6.0375,
+      "pnl": 3.4,
+      "opened": "2026-07-23T23:10:03Z",
+      "won": true,
+      "entry": 32.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 5,
+      "cum": 9.6625,
+      "pnl": 3.625,
+      "opened": "2026-07-23T23:24:03Z",
+      "won": true,
+      "entry": 27.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 6,
+      "cum": 13.0125,
+      "pnl": 3.35,
+      "opened": "2026-07-23T23:38:03Z",
+      "won": true,
+      "entry": 33.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 7,
+      "cum": 16.7875,
+      "pnl": 3.775,
+      "opened": "2026-07-24T00:23:03Z",
+      "won": true,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 8,
+      "cum": 15.0625,
+      "pnl": -1.725,
+      "opened": "2026-07-24T01:26:03Z",
+      "won": false,
+      "entry": 34.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 9,
+      "cum": 14.0375,
+      "pnl": -1.025,
+      "opened": "2026-07-24T03:20:04Z",
+      "won": false,
+      "entry": 20.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 10,
+      "cum": 17.2875,
+      "pnl": 3.25,
+      "opened": "2026-07-24T04:51:03Z",
+      "won": true,
+      "entry": 35.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 11,
+      "cum": 15.8125,
+      "pnl": -1.475,
+      "opened": "2026-07-24T05:06:03Z",
+      "won": false,
+      "entry": 29.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 12,
+      "cum": 14.5875,
+      "pnl": -1.225,
+      "opened": "2026-07-24T05:56:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 13,
+      "cum": 13.3125,
+      "pnl": -1.275,
+      "opened": "2026-07-24T07:51:03Z",
+      "won": false,
+      "entry": 25.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 14,
+      "cum": 13.18,
+      "pnl": -0.1325,
+      "opened": "2026-07-24T07:51:06Z",
+      "won": false,
+      "entry": 2.6500000000000057,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 15,
+      "cum": 12.005,
+      "pnl": -1.175,
+      "opened": "2026-07-24T08:37:03Z",
+      "won": false,
+      "entry": 23.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 16,
+      "cum": 11.43,
+      "pnl": -0.575,
+      "opened": "2026-07-24T08:38:04Z",
+      "won": false,
+      "entry": 11.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 17,
+      "cum": 10.005,
+      "pnl": -1.425,
+      "opened": "2026-07-24T09:36:03Z",
+      "won": false,
+      "entry": 28.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 18,
+      "cum": 8.98,
+      "pnl": -1.025,
+      "opened": "2026-07-24T09:52:03Z",
+      "won": false,
+      "entry": 20.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 19,
+      "cum": 7.255,
+      "pnl": -1.725,
+      "opened": "2026-07-24T10:22:03Z",
+      "won": false,
+      "entry": 34.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 20,
+      "cum": 11.28,
+      "pnl": 4.025,
+      "opened": "2026-07-24T10:39:03Z",
+      "won": true,
+      "entry": 19.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 21,
+      "cum": 15.155,
+      "pnl": 3.875,
+      "opened": "2026-07-24T11:25:03Z",
+      "won": true,
+      "entry": 22.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 22,
+      "cum": 14.28,
+      "pnl": -0.875,
+      "opened": "2026-07-24T11:54:03Z",
+      "won": false,
+      "entry": 17.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 23,
+      "cum": 12.755,
+      "pnl": -1.525,
+      "opened": "2026-07-24T14:08:03Z",
+      "won": false,
+      "entry": 30.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 24,
+      "cum": 12.23,
+      "pnl": -0.525,
+      "opened": "2026-07-25T00:26:03Z",
+      "won": false,
+      "entry": 10.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 25,
+      "cum": 16.355,
+      "pnl": 4.125,
+      "opened": "2026-07-25T05:11:03Z",
+      "won": true,
+      "entry": 17.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 26,
+      "cum": 15.13,
+      "pnl": -1.225,
+      "opened": "2026-07-25T05:23:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 27,
+      "cum": 18.455,
+      "pnl": 3.325,
+      "opened": "2026-07-25T11:21:03Z",
+      "won": true,
+      "entry": 33.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 28,
+      "cum": 17.205,
+      "pnl": -1.25,
+      "opened": "2026-07-25T17:04:04Z",
+      "won": false,
+      "entry": 25.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 29,
+      "cum": 16.58,
+      "pnl": -0.625,
+      "opened": "2026-07-25T19:39:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 30,
+      "cum": 16.265,
+      "pnl": -0.315,
+      "opened": "2026-07-25T21:54:03Z",
+      "won": false,
+      "entry": 6.299999999999997,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 31,
+      "cum": 15.9875,
+      "pnl": -0.2775,
+      "opened": "2026-07-26T03:38:03Z",
+      "won": false,
+      "entry": 5.549999999999997,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 32,
+      "cum": 20.2125,
+      "pnl": 4.225,
+      "opened": "2026-07-26T04:06:03Z",
+      "won": true,
+      "entry": 15.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 33,
+      "cum": 18.3625,
+      "pnl": -1.85,
+      "opened": "2026-07-26T04:38:03Z",
+      "won": false,
+      "entry": 37.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 34,
+      "cum": 22.9625,
+      "pnl": 4.6,
+      "opened": "2026-07-26T04:55:03Z",
+      "won": true,
+      "entry": 8.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 35,
+      "cum": 21.3375,
+      "pnl": -1.625,
+      "opened": "2026-07-26T05:08:03Z",
+      "won": false,
+      "entry": 32.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 36,
+      "cum": 19.7125,
+      "pnl": -1.625,
+      "opened": "2026-07-26T05:38:03Z",
+      "won": false,
+      "entry": 32.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 37,
+      "cum": 23.4375,
+      "pnl": 3.725,
+      "opened": "2026-07-26T06:05:03Z",
+      "won": true,
+      "entry": 25.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 38,
+      "cum": 23.1975,
+      "pnl": -0.24,
+      "opened": "2026-07-26T06:52:03Z",
+      "won": false,
+      "entry": 4.799999999999997,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 39,
+      "cum": 21.9725,
+      "pnl": -1.225,
+      "opened": "2026-07-26T07:50:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 40,
+      "cum": 21.1475,
+      "pnl": -0.825,
+      "opened": "2026-07-26T08:36:03Z",
+      "won": false,
+      "entry": 16.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 41,
+      "cum": 20.6725,
+      "pnl": -0.475,
+      "opened": "2026-07-26T08:53:03Z",
+      "won": false,
+      "entry": 9.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 42,
+      "cum": 20.2975,
+      "pnl": -0.375,
+      "opened": "2026-07-26T09:10:03Z",
+      "won": false,
+      "entry": 7.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 43,
+      "cum": 19.0725,
+      "pnl": -1.225,
+      "opened": "2026-07-26T09:39:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 44,
+      "cum": 17.4975,
+      "pnl": -1.575,
+      "opened": "2026-07-26T10:08:03Z",
+      "won": false,
+      "entry": 31.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 45,
+      "cum": 16.1725,
+      "pnl": -1.325,
+      "opened": "2026-07-26T10:25:03Z",
+      "won": false,
+      "entry": 26.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 46,
+      "cum": 15.4975,
+      "pnl": -0.675,
+      "opened": "2026-07-26T10:36:03Z",
+      "won": false,
+      "entry": 13.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 47,
+      "cum": 14.7225,
+      "pnl": -0.775,
+      "opened": "2026-07-26T11:08:03Z",
+      "won": false,
+      "entry": 15.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 48,
+      "cum": 13.8975,
+      "pnl": -0.825,
+      "opened": "2026-07-26T11:24:03Z",
+      "won": false,
+      "entry": 16.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 49,
+      "cum": 17.3725,
+      "pnl": 3.475,
+      "opened": "2026-07-26T11:38:04Z",
+      "won": true,
+      "entry": 30.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 50,
+      "cum": 21.0225,
+      "pnl": 3.65,
+      "opened": "2026-07-26T11:51:03Z",
+      "won": true,
+      "entry": 27.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 51,
+      "cum": 19.7975,
+      "pnl": -1.225,
+      "opened": "2026-07-26T13:37:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 52,
+      "cum": 18.7225,
+      "pnl": -1.075,
+      "opened": "2026-07-26T14:34:03Z",
+      "won": false,
+      "entry": 21.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 53,
+      "cum": 18.0975,
+      "pnl": -0.625,
+      "opened": "2026-07-26T14:54:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 54,
+      "cum": 17.1225,
+      "pnl": -0.975,
+      "opened": "2026-07-26T15:03:04Z",
+      "won": false,
+      "entry": 19.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 55,
+      "cum": 16.5975,
+      "pnl": -0.525,
+      "opened": "2026-07-26T16:20:03Z",
+      "won": false,
+      "entry": 10.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 56,
+      "cum": 20.5225,
+      "pnl": 3.925,
+      "opened": "2026-07-26T16:50:03Z",
+      "won": true,
+      "entry": 21.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 57,
+      "cum": 24.3475,
+      "pnl": 3.825,
+      "opened": "2026-07-26T17:35:03Z",
+      "won": true,
+      "entry": 23.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 58,
+      "cum": 28.5225,
+      "pnl": 4.175,
+      "opened": "2026-07-26T17:54:03Z",
+      "won": true,
+      "entry": 16.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 59,
+      "cum": 27.1475,
+      "pnl": -1.375,
+      "opened": "2026-07-26T18:09:03Z",
+      "won": false,
+      "entry": 27.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 60,
+      "cum": 26.5225,
+      "pnl": -0.625,
+      "opened": "2026-07-26T18:22:05Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 61,
+      "cum": 25.8975,
+      "pnl": -0.625,
+      "opened": "2026-07-26T18:40:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 62,
+      "cum": 24.4725,
+      "pnl": -1.425,
+      "opened": "2026-07-26T18:52:03Z",
+      "won": false,
+      "entry": 28.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 63,
+      "cum": 23.0475,
+      "pnl": -1.425,
+      "opened": "2026-07-26T19:21:03Z",
+      "won": false,
+      "entry": 28.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 64,
+      "cum": 21.8225,
+      "pnl": -1.225,
+      "opened": "2026-07-26T19:33:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 65,
+      "cum": 19.9975,
+      "pnl": -1.825,
+      "opened": "2026-07-26T20:53:03Z",
+      "won": false,
+      "entry": 36.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 66,
+      "cum": 19.1225,
+      "pnl": -0.875,
+      "opened": "2026-07-26T21:08:03Z",
+      "won": false,
+      "entry": 17.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 67,
+      "cum": 18.4225,
+      "pnl": -0.7,
+      "opened": "2026-07-26T23:24:03Z",
+      "won": false,
+      "entry": 14.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 68,
+      "cum": 17.1975,
+      "pnl": -1.225,
+      "opened": "2026-07-26T23:38:04Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 69,
+      "cum": 21.5475,
+      "pnl": 4.35,
+      "opened": "2026-07-26T23:39:03Z",
+      "won": true,
+      "entry": 13.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 70,
+      "cum": 25.5225,
+      "pnl": 3.975,
+      "opened": "2026-07-26T23:56:03Z",
+      "won": true,
+      "entry": 20.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 71,
+      "cum": 29.2975,
+      "pnl": 3.775,
+      "opened": "2026-07-27T00:55:03Z",
+      "won": true,
+      "entry": 24.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 72,
+      "cum": 32.5725,
+      "pnl": 3.275,
+      "opened": "2026-07-27T02:21:03Z",
+      "won": true,
+      "entry": 34.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 73,
+      "cum": 32.28,
+      "pnl": -0.2925,
+      "opened": "2026-07-27T02:41:03Z",
+      "won": false,
+      "entry": 5.849999999999994,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 74,
+      "cum": 31.355,
+      "pnl": -0.925,
+      "opened": "2026-07-27T03:10:03Z",
+      "won": false,
+      "entry": 18.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 75,
+      "cum": 34.53,
+      "pnl": 3.175,
+      "opened": "2026-07-27T03:21:03Z",
+      "won": true,
+      "entry": 36.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 76,
+      "cum": 32.905,
+      "pnl": -1.625,
+      "opened": "2026-07-27T04:37:03Z",
+      "won": false,
+      "entry": 32.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 77,
+      "cum": 32.6575,
+      "pnl": -0.2475,
+      "opened": "2026-07-27T04:54:03Z",
+      "won": false,
+      "entry": 4.95,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 78,
+      "cum": 31.1325,
+      "pnl": -1.525,
+      "opened": "2026-07-27T05:09:03Z",
+      "won": false,
+      "entry": 30.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 79,
+      "cum": 30.4575,
+      "pnl": -0.675,
+      "opened": "2026-07-27T05:24:03Z",
+      "won": false,
+      "entry": 13.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 80,
+      "cum": 34.4325,
+      "pnl": 3.975,
+      "opened": "2026-07-27T07:25:03Z",
+      "won": true,
+      "entry": 20.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 81,
+      "cum": 38.1575,
+      "pnl": 3.725,
+      "opened": "2026-07-27T07:51:03Z",
+      "won": true,
+      "entry": 25.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 82,
+      "cum": 36.7325,
+      "pnl": -1.425,
+      "opened": "2026-07-27T07:55:03Z",
+      "won": false,
+      "entry": 28.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 83,
+      "cum": 36.1075,
+      "pnl": -0.625,
+      "opened": "2026-07-27T08:24:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 84,
+      "cum": 34.4575,
+      "pnl": -1.65,
+      "opened": "2026-07-27T08:32:03Z",
+      "won": false,
+      "entry": 33.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 85,
+      "cum": 32.7325,
+      "pnl": -1.725,
+      "opened": "2026-07-27T09:20:03Z",
+      "won": false,
+      "entry": 34.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 86,
+      "cum": 32.47,
+      "pnl": -0.2625,
+      "opened": "2026-07-27T09:55:03Z",
+      "won": false,
+      "entry": 5.25,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 87,
+      "cum": 31.145,
+      "pnl": -1.325,
+      "opened": "2026-07-27T10:17:03Z",
+      "won": false,
+      "entry": 26.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 88,
+      "cum": 29.92,
+      "pnl": -1.225,
+      "opened": "2026-07-27T10:39:03Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 89,
+      "cum": 29.37,
+      "pnl": -0.55,
+      "opened": "2026-07-27T11:09:03Z",
+      "won": false,
+      "entry": 11.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 90,
+      "cum": 32.945,
+      "pnl": 3.575,
+      "opened": "2026-07-27T11:36:03Z",
+      "won": true,
+      "entry": 28.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 91,
+      "cum": 37.52,
+      "pnl": 4.575,
+      "opened": "2026-07-27T12:41:03Z",
+      "won": true,
+      "entry": 8.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 92,
+      "cum": 35.67,
+      "pnl": -1.85,
+      "opened": "2026-07-27T13:02:03Z",
+      "won": false,
+      "entry": 37.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 93,
+      "cum": 35.245,
+      "pnl": -0.425,
+      "opened": "2026-07-27T13:26:06Z",
+      "won": false,
+      "entry": 8.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 94,
+      "cum": 34.42,
+      "pnl": -0.825,
+      "opened": "2026-07-27T14:05:03Z",
+      "won": false,
+      "entry": 16.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 95,
+      "cum": 38.245,
+      "pnl": 3.825,
+      "opened": "2026-07-27T14:07:03Z",
+      "won": true,
+      "entry": 23.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 96,
+      "cum": 42.47,
+      "pnl": 4.225,
+      "opened": "2026-07-27T15:09:06Z",
+      "won": true,
+      "entry": 15.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 97,
+      "cum": 46.645,
+      "pnl": 4.175,
+      "opened": "2026-07-27T15:10:03Z",
+      "won": true,
+      "entry": 16.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 98,
+      "cum": 45.37,
+      "pnl": -1.275,
+      "opened": "2026-07-27T15:18:06Z",
+      "won": false,
+      "entry": 25.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 99,
+      "cum": 44.745,
+      "pnl": -0.625,
+      "opened": "2026-07-27T15:19:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 100,
+      "cum": 48.67,
+      "pnl": 3.925,
+      "opened": "2026-07-27T15:39:06Z",
+      "won": true,
+      "entry": 21.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 101,
+      "cum": 48.045,
+      "pnl": -0.625,
+      "opened": "2026-07-27T15:40:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 102,
+      "cum": 46.87,
+      "pnl": -1.175,
+      "opened": "2026-07-27T15:51:03Z",
+      "won": false,
+      "entry": 23.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 103,
+      "cum": 45.145,
+      "pnl": -1.725,
+      "opened": "2026-07-27T16:07:03Z",
+      "won": false,
+      "entry": 34.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 104,
+      "cum": 44.77,
+      "pnl": -0.375,
+      "opened": "2026-07-27T17:06:06Z",
+      "won": false,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 105,
+      "cum": 44.145,
+      "pnl": -0.625,
+      "opened": "2026-07-27T17:11:03Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 106,
+      "cum": 43.72,
+      "pnl": -0.425,
+      "opened": "2026-07-27T18:11:06Z",
+      "won": false,
+      "entry": 8.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 107,
+      "cum": 47.445,
+      "pnl": 3.725,
+      "opened": "2026-07-27T18:55:03Z",
+      "won": true,
+      "entry": 25.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 108,
+      "cum": 47.02,
+      "pnl": -0.425,
+      "opened": "2026-07-27T19:53:06Z",
+      "won": false,
+      "entry": 8.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 109,
+      "cum": 50.645,
+      "pnl": 3.625,
+      "opened": "2026-07-27T20:25:03Z",
+      "won": true,
+      "entry": 27.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 110,
+      "cum": 49.12,
+      "pnl": -1.525,
+      "opened": "2026-07-27T21:03:03Z",
+      "won": false,
+      "entry": 30.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 111,
+      "cum": 47.495,
+      "pnl": -1.625,
+      "opened": "2026-07-27T21:17:03Z",
+      "won": false,
+      "entry": 32.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 112,
+      "cum": 46.72,
+      "pnl": -0.775,
+      "opened": "2026-07-27T23:37:03Z",
+      "won": false,
+      "entry": 15.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 113,
+      "cum": 50.245,
+      "pnl": 3.525,
+      "opened": "2026-07-28T00:01:19Z",
+      "won": true,
+      "entry": 29.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 114,
+      "cum": 49.07,
+      "pnl": -1.175,
+      "opened": "2026-07-28T00:47:03Z",
+      "won": false,
+      "entry": 23.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 115,
+      "cum": 53.345,
+      "pnl": 4.275,
+      "opened": "2026-07-28T01:26:06Z",
+      "won": true,
+      "entry": 14.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 116,
+      "cum": 52.32,
+      "pnl": -1.025,
+      "opened": "2026-07-28T01:40:03Z",
+      "won": false,
+      "entry": 20.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 117,
+      "cum": 56.595,
+      "pnl": 4.275,
+      "opened": "2026-07-28T01:56:03Z",
+      "won": true,
+      "entry": 14.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 118,
+      "cum": 60.42,
+      "pnl": 3.825,
+      "opened": "2026-07-28T02:05:03Z",
+      "won": true,
+      "entry": 23.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 119,
+      "cum": 58.945,
+      "pnl": -1.475,
+      "opened": "2026-07-28T02:18:03Z",
+      "won": false,
+      "entry": 29.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 120,
+      "cum": 57.92,
+      "pnl": -1.025,
+      "opened": "2026-07-28T02:37:03Z",
+      "won": false,
+      "entry": 20.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 121,
+      "cum": 56.445,
+      "pnl": -1.475,
+      "opened": "2026-07-28T02:37:06Z",
+      "won": false,
+      "entry": 29.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 122,
+      "cum": 60.32,
+      "pnl": 3.875,
+      "opened": "2026-07-28T02:53:03Z",
+      "won": true,
+      "entry": 22.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 123,
+      "cum": 64.195,
+      "pnl": 3.875,
+      "opened": "2026-07-28T03:32:06Z",
+      "won": true,
+      "entry": 22.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 124,
+      "cum": 63.82,
+      "pnl": -0.375,
+      "opened": "2026-07-28T04:15:10Z",
+      "won": false,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 125,
+      "cum": 68.445,
+      "pnl": 4.625,
+      "opened": "2026-07-28T05:36:06Z",
+      "won": true,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 126,
+      "cum": 73.07,
+      "pnl": 4.625,
+      "opened": "2026-07-28T05:37:03Z",
+      "won": true,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 127,
+      "cum": 72.545,
+      "pnl": -0.525,
+      "opened": "2026-07-28T05:54:03Z",
+      "won": false,
+      "entry": 10.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 128,
+      "cum": 71.77,
+      "pnl": -0.775,
+      "opened": "2026-07-28T05:54:06Z",
+      "won": false,
+      "entry": 15.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 129,
+      "cum": 71.395,
+      "pnl": -0.375,
+      "opened": "2026-07-28T06:07:03Z",
+      "won": false,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 130,
+      "cum": 70.77,
+      "pnl": -0.625,
+      "opened": "2026-07-28T06:07:06Z",
+      "won": false,
+      "entry": 12.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 131,
+      "cum": 69.895,
+      "pnl": -0.875,
+      "opened": "2026-07-28T12:03:03Z",
+      "won": false,
+      "entry": 17.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 132,
+      "cum": 68.945,
+      "pnl": -0.95,
+      "opened": "2026-07-28T12:10:03Z",
+      "won": false,
+      "entry": 19.0,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 133,
+      "cum": 72.22,
+      "pnl": 3.275,
+      "opened": "2026-07-28T13:07:03Z",
+      "won": true,
+      "entry": 34.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 134,
+      "cum": 75.595,
+      "pnl": 3.375,
+      "opened": "2026-07-28T13:51:03Z",
+      "won": true,
+      "entry": 32.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 135,
+      "cum": 80.22,
+      "pnl": 4.625,
+      "opened": "2026-07-28T14:20:06Z",
+      "won": true,
+      "entry": 7.5,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 136,
+      "cum": 84.795,
+      "pnl": 4.575,
+      "opened": "2026-07-28T15:06:03Z",
+      "won": true,
+      "entry": 8.5,
+      "side": "YES",
+      "product": "BTC"
+    },
+    {
+      "i": 137,
+      "cum": 83.12,
+      "pnl": -1.675,
+      "opened": "2026-07-28T15:35:03Z",
+      "won": false,
+      "entry": 33.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 138,
+      "cum": 81.945,
+      "pnl": -1.175,
+      "opened": "2026-07-28T15:47:03Z",
+      "won": false,
+      "entry": 23.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 139,
+      "cum": 80.72,
+      "pnl": -1.225,
+      "opened": "2026-07-28T15:47:06Z",
+      "won": false,
+      "entry": 24.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 140,
+      "cum": 79.095,
+      "pnl": -1.625,
+      "opened": "2026-07-28T16:17:03Z",
+      "won": false,
+      "entry": 32.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 141,
+      "cum": 78.72,
+      "pnl": -0.375,
+      "opened": "2026-07-28T16:20:03Z",
+      "won": false,
+      "entry": 7.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 142,
+      "cum": 77.395,
+      "pnl": -1.325,
+      "opened": "2026-07-28T17:48:06Z",
+      "won": false,
+      "entry": 26.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 143,
+      "cum": 77.0575,
+      "pnl": -0.3375,
+      "opened": "2026-07-28T17:50:03Z",
+      "won": false,
+      "entry": 6.75,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 144,
+      "cum": 76.4075,
+      "pnl": -0.65,
+      "opened": "2026-07-28T18:02:06Z",
+      "won": false,
+      "entry": 13.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 145,
+      "cum": 75.9325,
+      "pnl": -0.475,
+      "opened": "2026-07-28T18:06:03Z",
+      "won": false,
+      "entry": 9.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 146,
+      "cum": 74.5325,
+      "pnl": -1.4,
+      "opened": "2026-07-28T18:22:06Z",
+      "won": false,
+      "entry": 28.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 147,
+      "cum": 78.6075,
+      "pnl": 4.075,
+      "opened": "2026-07-28T18:24:03Z",
+      "won": true,
+      "entry": 18.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 148,
+      "cum": 77.4825,
+      "pnl": -1.125,
+      "opened": "2026-07-28T18:34:03Z",
+      "won": false,
+      "entry": 22.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 149,
+      "cum": 76.2825,
+      "pnl": -1.2,
+      "opened": "2026-07-28T18:34:06Z",
+      "won": false,
+      "entry": 24.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 150,
+      "cum": 80.1575,
+      "pnl": 3.875,
+      "opened": "2026-07-28T18:49:03Z",
+      "won": true,
+      "entry": 22.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 151,
+      "cum": 83.7825,
+      "pnl": 3.625,
+      "opened": "2026-07-28T18:49:06Z",
+      "won": true,
+      "entry": 27.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 152,
+      "cum": 83.2075,
+      "pnl": -0.575,
+      "opened": "2026-07-28T19:09:03Z",
+      "won": false,
+      "entry": 11.5,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 153,
+      "cum": 86.7325,
+      "pnl": 3.525,
+      "opened": "2026-07-28T19:24:03Z",
+      "won": true,
+      "entry": 29.5,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 154,
+      "cum": 85.5575,
+      "pnl": -1.175,
+      "opened": "2026-07-28T19:24:06Z",
+      "won": false,
+      "entry": 23.5,
+      "side": "NO",
+      "product": "ETH"
+    }
+  ],
+  "live_cum": [
+    {
+      "i": 1,
+      "cum": -0.7,
+      "pnl": -0.7,
+      "opened": "2026-07-29T17:33:42Z",
+      "won": false,
+      "entry": 14.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 2,
+      "cum": -1.4,
+      "pnl": -0.7,
+      "opened": "2026-07-29T20:36:09Z",
+      "won": false,
+      "entry": 14.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 3,
+      "cum": -2.8,
+      "pnl": -1.4,
+      "opened": "2026-07-29T21:24:09Z",
+      "won": false,
+      "entry": 28.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 4,
+      "cum": -3.2,
+      "pnl": -0.4,
+      "opened": "2026-07-30T00:11:09Z",
+      "won": false,
+      "entry": 8.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 5,
+      "cum": -3.75,
+      "pnl": -0.55,
+      "opened": "2026-07-30T01:24:09Z",
+      "won": false,
+      "entry": 11.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 6,
+      "cum": -4.055,
+      "pnl": -0.305,
+      "opened": "2026-07-30T01:24:12Z",
+      "won": false,
+      "entry": 6.1000000000000085,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 7,
+      "cum": -4.705,
+      "pnl": -0.65,
+      "opened": "2026-07-30T01:54:11Z",
+      "won": false,
+      "entry": 13.0,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 8,
+      "cum": -1.305,
+      "pnl": 3.4,
+      "opened": "2026-07-30T03:09:09Z",
+      "won": true,
+      "entry": 32.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 9,
+      "cum": -1.635,
+      "pnl": -0.33,
+      "opened": "2026-07-30T03:25:09Z",
+      "won": false,
+      "entry": 6.599999999999994,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 10,
+      "cum": 1.965,
+      "pnl": 3.6,
+      "opened": "2026-07-30T06:08:09Z",
+      "won": true,
+      "entry": 28.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 11,
+      "cum": 0.365,
+      "pnl": -1.6,
+      "opened": "2026-07-30T06:25:09Z",
+      "won": false,
+      "entry": 32.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 12,
+      "cum": 0.06,
+      "pnl": -0.305,
+      "opened": "2026-07-30T06:26:10Z",
+      "won": false,
+      "entry": 6.1000000000000085,
+      "side": "NO",
+      "product": "ETH"
+    },
+    {
+      "i": 13,
+      "cum": -0.54,
+      "pnl": -0.6,
+      "opened": "2026-07-30T12:53:09Z",
+      "won": false,
+      "entry": 12.0,
+      "side": "NO",
+      "product": "BTC"
+    },
+    {
+      "i": 14,
+      "cum": -1.94,
+      "pnl": -1.4,
+      "opened": "2026-07-30T14:40:12Z",
+      "won": false,
+      "entry": 28.000000000000004,
+      "side": "YES",
+      "product": "ETH"
+    },
+    {
+      "i": 15,
+      "cum": -2.265,
+      "pnl": -0.325,
+      "opened": "2026-07-30T16:53:09Z",
+      "won": false,
+      "entry": 6.5,
+      "side": "NO",
+      "product": "BTC"
+    }
+  ],
+  "live_trades": [
+    {
+      "opened_at": "2026-07-29T17:33:42Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 14.0,
+      "pnl": -0.7,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": true,
+      "htf": "bearish",
+      "edge": -8.2,
+      "minutes_left": 11.3,
+      "mid_imp": 40.5,
+      "excursion": 0.1506047747524164,
+      "rat_len": 1158,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-29T20:36:09Z",
+      "product": "ETH",
+      "side": "NO",
+      "entry": 14.0,
+      "pnl": -0.7,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": true,
+      "htf": "bearish",
+      "edge": -8.2,
+      "minutes_left": 8.8,
+      "mid_imp": 40.0,
+      "excursion": 0.23432518597237273,
+      "rat_len": 1118,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-29T21:24:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 28.0,
+      "pnl": -1.4,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -8.8,
+      "minutes_left": 5.8,
+      "mid_imp": 21.0,
+      "excursion": 0.03557603770933948,
+      "rat_len": 4162,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T00:11:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 8.0,
+      "pnl": -0.4,
+      "won": false,
+      "gate": "pass_fib",
+      "tclass": "wick_hunt",
+      "has_llm": true,
+      "skipped_llm": false,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -10.9,
+      "minutes_left": 3.8,
+      "mid_imp": 24.0,
+      "excursion": 0.05577065055430985,
+      "rat_len": 3915,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T01:24:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 11.0,
+      "pnl": -0.55,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -13.5,
+      "minutes_left": 5.8,
+      "mid_imp": 4.0,
+      "excursion": 0.09166786979108998,
+      "rat_len": 1066,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T01:24:12Z",
+      "product": "ETH",
+      "side": "NO",
+      "entry": 6.1000000000000085,
+      "pnl": -0.305,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": true,
+      "htf": "bearish",
+      "edge": -11.9,
+      "minutes_left": 5.8,
+      "mid_imp": 3.0,
+      "excursion": 0.17264793506752696,
+      "rat_len": 1140,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T01:54:11Z",
+      "product": "ETH",
+      "side": "NO",
+      "entry": 13.0,
+      "pnl": -0.65,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": true,
+      "htf": "bearish",
+      "edge": -11.1,
+      "minutes_left": 5.8,
+      "mid_imp": 8.5,
+      "excursion": 0.13273411371237387,
+      "rat_len": 1142,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T03:09:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 32.0,
+      "pnl": 3.4,
+      "won": true,
+      "gate": "pass_fib",
+      "tclass": "wick_hunt",
+      "has_llm": true,
+      "skipped_llm": false,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -9.6,
+      "minutes_left": 5.8,
+      "mid_imp": 14.0,
+      "excursion": 0.005912154125331526,
+      "rat_len": 4528,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T03:25:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 6.599999999999994,
+      "pnl": -0.33,
+      "won": false,
+      "gate": "pass_fib",
+      "tclass": "wick_hunt",
+      "has_llm": true,
+      "skipped_llm": false,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -8.8,
+      "minutes_left": 4.8,
+      "mid_imp": 13.049999999999997,
+      "excursion": 0.07021326890355173,
+      "rat_len": 4537,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T06:08:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 28.0,
+      "pnl": 3.6,
+      "won": true,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -8.8,
+      "minutes_left": 6.8,
+      "mid_imp": 25.0,
+      "excursion": 0.026019905227503415,
+      "rat_len": 1125,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T06:25:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 32.0,
+      "pnl": -1.6,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -9.9,
+      "minutes_left": 4.8,
+      "mid_imp": 25.0,
+      "excursion": 0.005834056594733461,
+      "rat_len": 1125,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T06:26:10Z",
+      "product": "ETH",
+      "side": "NO",
+      "entry": 6.1000000000000085,
+      "pnl": -0.305,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -12.8,
+      "minutes_left": 3.8,
+      "mid_imp": 57.2,
+      "excursion": 0.06730395095224662,
+      "rat_len": 1105,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T12:53:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 12.0,
+      "pnl": -0.6,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -8.6,
+      "minutes_left": 6.8,
+      "mid_imp": 26.0,
+      "excursion": 0.062251541929936316,
+      "rat_len": 3016,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T14:40:12Z",
+      "product": "ETH",
+      "side": "YES",
+      "entry": 28.000000000000004,
+      "pnl": -1.4,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bullish",
+      "edge": null,
+      "minutes_left": 4.8,
+      "mid_imp": 26.0,
+      "excursion": 0.06769916573796664,
+      "rat_len": 3341,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    },
+    {
+      "opened_at": "2026-07-30T16:53:09Z",
+      "product": "BTC",
+      "side": "NO",
+      "entry": 6.5,
+      "pnl": -0.325,
+      "won": false,
+      "gate": "skipped_llm_no_trade",
+      "tclass": "wick_hunt",
+      "has_llm": false,
+      "skipped_llm": true,
+      "audit": false,
+      "htf": "bearish",
+      "edge": -10.6,
+      "minutes_left": 6.8,
+      "mid_imp": 25.150000000000006,
+      "excursion": 0.08687212599209904,
+      "rat_len": 1137,
+      "trigger": "wick-hunt after adverse excursion (excursion_pct=0"
+    }
+  ],
+  "paper_entry_buckets": {
+    "0-15": {
+      "n": 47,
+      "wr": 0.19148936170212766,
+      "avg_pnl": 0.48047872340425535,
+      "avg_entry": 9.539361702127659
+    },
+    "15-25": {
+      "n": 54,
+      "wr": 0.3888888888888889,
+      "avg_pnl": 0.9060185185185184,
+      "avg_entry": 20.76851851851852
+    },
+    "25-35": {
+      "n": 48,
+      "wr": 0.3541666666666667,
+      "avg_pnl": 0.2739583333333334,
+      "avg_entry": 29.9375
+    },
+    "35-45": {
+      "n": 5,
+      "wr": 0.4,
+      "avg_pnl": 0.17999999999999994,
+      "avg_entry": 36.4
+    }
+  },
+  "live_entry_buckets": {
+    "0-15": {
+      "n": 10,
+      "wr": 0.0,
+      "avg_pnl": -0.48650000000000004,
+      "avg_entry": 9.73
+    },
+    "25-35": {
+      "n": 5,
+      "wr": 0.4,
+      "avg_pnl": 0.5199999999999998,
+      "avg_entry": 29.6
+    }
+  },
+  "paper_wr_by_gate": {
+    "skipped_llm_no_trade": {
+      "w": 42,
+      "n": 128,
+      "wr": 0.328125
+    },
+    "pass_fib": {
+      "w": 7,
+      "n": 26,
+      "wr": 0.2692307692307692
+    }
+  },
+  "live_wr_by_gate": {
+    "skipped_llm_no_trade": {
+      "w": 1,
+      "n": 12,
+      "wr": 0.08333333333333333
+    },
+    "pass_fib": {
+      "w": 1,
+      "n": 3,
+      "wr": 0.3333333333333333
+    }
+  },
+  "paper_wr_by_llm": {
+    "False": {
+      "w": 42,
+      "n": 128,
+      "wr": 0.328125
+    },
+    "True": {
+      "w": 7,
+      "n": 26,
+      "wr": 0.2692307692307692
+    }
+  },
+  "live_wr_by_llm": {
+    "False": {
+      "w": 1,
+      "n": 12,
+      "wr": 0.08333333333333333
+    },
+    "True": {
+      "w": 1,
+      "n": 3,
+      "wr": 0.3333333333333333
+    }
+  },
+  "paper_wr_by_product": {
+    "BTC": {
+      "n": 44,
+      "wr": 0.29545454545454547
+    },
+    "ETH": {
+      "n": 110,
+      "wr": 0.32727272727272727
+    }
+  },
+  "live_wr_by_product": {
+    "BTC": {
+      "n": 10,
+      "wr": 0.2
+    },
+    "ETH": {
+      "n": 5,
+      "wr": 0.0
+    }
+  }
+}

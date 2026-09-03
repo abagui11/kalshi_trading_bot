@@ -101,16 +101,21 @@ KALSHI_PRIVATE_KEY_PATH: Path = (
 _series_raw = _optional("KALSHI_SERIES") or "KXBTC15M,KXETH15M"
 KALSHI_SERIES: list[str] = [s.strip() for s in _series_raw.split(",") if s.strip()]
 KALSHI_PAPER_ONLY: bool = _optional_bool("KALSHI_PAPER_ONLY", default=True)
-KALSHI_MAX_CONTRACTS: int = int(os.getenv("KALSHI_MAX_CONTRACTS", "5") or "5")
-# Real |model_fair − mid| threshold (¢). Default 8 — 3¢ is inside noise on 15m binaries.
+# Safety ceiling on contracts; conviction/deploy% is the real risk limiter.
+KALSHI_MAX_CONTRACTS: int = int(os.getenv("KALSHI_MAX_CONTRACTS", "100") or "100")
+# Real |model_fair − mid| threshold (¢). Used for sizing boost / audit, not hard skip on control.
 KALSHI_MIN_EDGE_CENTS: float = float(os.getenv("KALSHI_MIN_EDGE_CENTS", "8") or "8")
 KALSHI_CYCLE_OFFSET_SEC: int = int(os.getenv("KALSHI_CYCLE_OFFSET_SEC", "30") or "30")
-# Sizing vs ~$77 bankroll: each trade spends up to DEPLOY_PCT of bankroll (capped by MAX_CONTRACTS).
+# Sizing vs bankroll. Conviction matrix sets deploy%; MAX_DEPLOY_PCT hard-caps risk.
 KALSHI_BANKROLL_USD: float = float(os.getenv("KALSHI_BANKROLL_USD", "77") or "77")
 KALSHI_DEPLOY_PCT: float = float(os.getenv("KALSHI_DEPLOY_PCT", "0.05") or "0.05")
-# Hard notional ceiling per order (live + paper). Blocks oversized fills if caps mis-set.
+# Never risk more than this fraction of book on a single trade.
+KALSHI_MAX_DEPLOY_PCT: float = float(
+    os.getenv("KALSHI_MAX_DEPLOY_PCT", "0.15") or "0.15"
+)
+# Absolute notional ceiling; 0 disables (deploy% is the limiter).
 KALSHI_MAX_NOTIONAL_USD: float = float(
-    os.getenv("KALSHI_MAX_NOTIONAL_USD", "5") or "5"
+    os.getenv("KALSHI_MAX_NOTIONAL_USD", "0") or "0"
 )
 # When live, prefer Kalshi account balance for bankroll; fall back to KALSHI_BANKROLL_USD.
 # Sizing still never exceeds KALSHI_BANKROLL_USD (see kalshi_sizing.sizing_bankroll_usd).
@@ -122,11 +127,25 @@ KALSHI_LIVE_TIME_IN_FORCE: str = (
     (_optional("KALSHI_LIVE_TIME_IN_FORCE") or "immediate_or_cancel").strip().lower()
 )
 
-# Multi-bot enable list. Default adverse-only (control/lottery are cost/experiments).
-_bots_raw = _optional("ENABLED_BOTS") or "adverse"
+# Multi-bot enable list. Default control = always-on conviction product path.
+_bots_raw = _optional("ENABLED_BOTS") or "control"
 ENABLED_BOTS: tuple[str, ...] = tuple(
     s.strip() for s in _bots_raw.split(",") if s.strip()
-) or ("adverse",)
+) or ("control",)
+
+# Macro news RSS feeds (comma-separated). Used when MACRO_CONTEXT_ENABLED.
+_macro_feeds_raw = _optional("MACRO_FEED_URLS") or (
+    "https://www.federalreserve.gov/feeds/press_all.xml,"
+    "https://www.cnbc.com/id/10000664/device/rss/rss.html,"
+    "https://www.coindesk.com/arc/outboundfeeds/rss/"
+)
+MACRO_FEED_URLS: tuple[str, ...] = tuple(
+    s.strip() for s in _macro_feeds_raw.split(",") if s.strip()
+)
+_macro_extra = _optional("MACRO_KEYWORD_EXTRA") or ""
+MACRO_KEYWORD_EXTRA: tuple[str, ...] = tuple(
+    s.strip().lower() for s in _macro_extra.split(",") if s.strip()
+)
 
 # Shared ICT/HTF Claude refresh policy (see kalshi_cycle._should_refresh_htf).
 # every_near_tick | once_per_window | ttl_event
