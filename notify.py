@@ -1,4 +1,10 @@
-"""Telegram notifications for Kalshi paper decisions (trades + skips)."""
+"""Telegram notifications for Kalshi decisions (trades + skips).
+
+Cards label themselves from ``KALSHI_PAPER_ONLY``: a filled trade is a
+``LIVE FILL`` when the bot is trading the real account, ``PAPER TRADE`` when
+it is soaking. Never hardcode one or the other — a card that claims the wrong
+mode is worse than no card.
+"""
 
 from __future__ import annotations
 
@@ -30,8 +36,9 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
     )
     stats = paper.get_stats(bot_id=suggestion.bot_id or "control")
     bot = suggestion.bot_id or "control"
+    filled_label = "PAPER TRADE" if config.KALSHI_PAPER_ONLY else "LIVE FILL"
     header = (
-        f"Kalshi 15m [{bot}] PAPER TRADE"
+        f"Kalshi 15m [{bot}] {filled_label}"
         if suggestion.is_trade() and opened
         else (
             f"Kalshi 15m [{bot}] TRADE SIGNAL"
@@ -86,7 +93,8 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
             f"{' · contra' if suggestion.market_agree is False else (' · agree' if suggestion.market_agree else '')}"
             f" · max {config.KALSHI_MAX_DEPLOY_PCT*100:.0f}% book",
             f"Expiry / close: {expiry}",
-            f"Paper equity: ${stats['equity_usd']:.2f} | open {stats['open_count']} | "
+            f"{'Paper' if config.KALSHI_PAPER_ONLY else 'Book'} equity: "
+            f"${stats['equity_usd']:.2f} | open {stats['open_count']} | "
             f"{stats['wins']}W/{stats['losses']}L",
             "",
             "Why:",

@@ -1058,7 +1058,8 @@ def format_stats_text(*, bot_id: str | None = None) -> str:
         bots = [get_stats(bot_id=bot_id)]
     else:
         bots = get_all_bot_stats()
-    lines = ["Kalshi 15m paper stats (multi-bot)"]
+    mode = "paper" if config.KALSHI_PAPER_ONLY else "live"
+    lines = [f"Kalshi 15m {mode} stats (multi-bot)"]
     for s in bots:
         lines.append(
             f"[{s.get('bot_id')}] Equity ${s['equity_usd']:.2f} · "
@@ -1072,7 +1073,7 @@ def format_stats_text(*, bot_id: str | None = None) -> str:
 def format_positions_text(*, bot_id: str | None = None) -> str:
     opens = get_open_positions(bot_id=bot_id)
     if not opens:
-        return "No open Kalshi paper positions."
+        return "No open Kalshi positions."
     lines = ["Open positions:"]
     for p in opens:
         lines.append(
