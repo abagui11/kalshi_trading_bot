@@ -17,7 +17,7 @@ def now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 sett = k.request("GET", "/portfolio/settlements", params={"exchange_index": CRYPTO, "limit": 50}, auth=True)
-EPOCH = "2026-09-04T16:37:00Z"
+EPOCH = "2026-09-04T14:20:00Z"
 fills = k.request("GET", "/portfolio/fills", params={"exchange_index": CRYPTO, "limit": 80}, auth=True)
 fills_by_ticker: dict[str, list] = {}
 for f in fills.get("fills") or []:
