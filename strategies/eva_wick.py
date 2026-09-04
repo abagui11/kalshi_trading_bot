@@ -341,6 +341,10 @@ class EvaWickStrategy:
             require_edge=False,
             deploy_pct=deploy,
             trigger_name=pattern,
+            # Price the book at the side mid: a live IOC adds
+            # KALSHI_LIVE_TAKE_CENTS and can cross; the legacy −3¢ "intended
+            # limit" model can never fill as a live IOC (pure paper optimism).
+            entry_at_mid=True,
         )
         sug.bot_id = self.bot_id
         if sug.is_trade():
@@ -380,7 +384,14 @@ class EvaWickStrategy:
 
     # ---------------------------------------------------------- take-profit
     def _maybe_take_profit(self, ctx: SharedCycleContext) -> bool:
-        """Flatten an open position early when the side roughly doubles."""
+        """Flatten an open position early when the side roughly doubles.
+
+        Paper: mark the book flat at the side mid (as before). Live: actually
+        exit on the exchange first — buy the opposite side fill-or-kill so
+        Kalshi nets the position — and only flatten the book at the real fill.
+        If the live exit doesn't fill, keep the position open and retry next
+        tick; never let the ledger diverge from the account.
+        """
         mid = ctx.yes_mid_cents
         if mid is None:
             return False
@@ -395,29 +406,94 @@ class EvaWickStrategy:
             entry = float(pos.get("entry_cents") or 0)
             if entry <= 0:
                 continue
-            side_now = kalshi_triggers.side_mid_cents(
-                str(pos.get("side")), float(mid)
-            )
+            pos_side = str(pos.get("side") or "").upper()
+            contracts = int(pos.get("contracts") or 0)
+            side_now = kalshi_triggers.side_mid_cents(pos_side, float(mid))
             target = entry * float(bot_config.EVA_WICK_TP_MULTIPLE)
             if side_now < target:
                 continue
+
+            exit_cents = self._execute_live_exit(
+                ctx, pos_side=pos_side, contracts=contracts, side_now=side_now
+            )
+            if exit_cents is None:
+                # Live exit unfilled/rejected — position stays open, retry.
+                return False
+
             closed = paper.flatten_position_early(
                 int(pos["id"]),
-                exit_side_cents=side_now,
+                exit_side_cents=exit_cents,
                 reason="eva_wick_tp",
             )
             if closed:
                 logger.info(
                     "eva_wick TP: %s %s %s @ %.1f¢ -> %.1f¢",
                     ctx.market_ticker,
-                    pos.get("side"),
-                    pos.get("contracts"),
+                    pos_side,
+                    contracts,
                     entry,
-                    side_now,
+                    exit_cents,
                 )
-                self._notify_tp(ctx, pos, entry, side_now)
+                self._notify_tp(ctx, pos, entry, exit_cents)
                 return True
         return False
+
+    @staticmethod
+    def _execute_live_exit(
+        ctx: SharedCycleContext,
+        *,
+        pos_side: str,
+        contracts: int,
+        side_now: float,
+    ) -> float | None:
+        """Exit on the exchange by buying the opposite side (Kalshi nets).
+
+        Returns the realized exit in *our side's* cents, or None when the
+        exit did not fully fill (paper mode returns the mid mark unchanged).
+        Fill-or-kill keeps it all-or-nothing so the book mirrors the account.
+        """
+        import kalshi_client
+
+        opp = "NO" if pos_side == "YES" else "YES"
+        # Opposite side priced at its mid; place_order adds LIVE_TAKE aggression.
+        opp_mid = max(1.0, min(99.0, 100.0 - side_now))
+        try:
+            resp = kalshi_client.place_order(
+                ctx.market_ticker,
+                opp,
+                contracts,
+                yes_price_cents=int(round(opp_mid)),
+                time_in_force="fill_or_kill",
+                closing=True,
+            )
+        except Exception:
+            logger.exception(
+                "eva_wick: live TP exit failed for %s — leaving position open",
+                ctx.market_ticker,
+            )
+            return None
+
+        status = str((resp or {}).get("status") or "")
+        if status == "paper_only":
+            return side_now
+        if not isinstance(resp, dict) or resp.get("error") or status == "rejected":
+            logger.warning("eva_wick: TP exit order error: %s", resp)
+            return None
+        filled = kalshi_client.filled_contract_count(resp)
+        if filled < contracts:
+            logger.info(
+                "eva_wick: TP exit FOK unfilled (%s/%s) on %s — retry next tick",
+                filled,
+                contracts,
+                ctx.market_ticker,
+            )
+            return None
+        # average_fill_price is in YES terms; map back to our side's cents.
+        return kalshi_client.side_fill_cents_from_response(
+            pos_side,
+            resp,
+            fallback_side_cents=side_now,
+        )
 
     @staticmethod
     def _notify_tp(

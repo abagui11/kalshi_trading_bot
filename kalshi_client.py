@@ -323,22 +323,32 @@ def place_order(
     contracts: int,
     *,
     yes_price_cents: int | None = None,
+    time_in_force: str | None = None,
+    closing: bool = False,
 ) -> dict[str, Any]:
     """Place a live order via Create Order V2.
 
     ``yes_price_cents`` is the *side* entry in cents (YES price for YES buys,
     NO price for NO buys) — same convention as the legacy yes_price/no_price body.
 
+    ``closing=True`` marks a risk-reducing exit (buying the opposite side to
+    net out an open position): notional/contract entry caps do not apply, and
+    ``time_in_force`` may override the config default (e.g. fill_or_kill so an
+    exit is all-or-nothing and the book never splits from the account).
+
     No-op stub when KALSHI_PAPER_ONLY=true.
     """
     import kalshi_sizing
 
     entry = float(yes_price_cents if yes_price_cents is not None else 0)
-    try:
-        kalshi_sizing.assert_order_allowed(int(contracts), entry if entry > 0 else 1.0)
-    except ValueError as exc:
-        logger.error("Refusing order: %s", exc)
-        return {"status": "rejected", "error": str(exc), "ticker": ticker}
+    if not closing:
+        try:
+            kalshi_sizing.assert_order_allowed(
+                int(contracts), entry if entry > 0 else 1.0
+            )
+        except ValueError as exc:
+            logger.error("Refusing order: %s", exc)
+            return {"status": "rejected", "error": str(exc), "ticker": ticker}
 
     if config.KALSHI_PAPER_ONLY:
         logger.info(
@@ -365,7 +375,8 @@ def place_order(
 
     take = float(getattr(config, "KALSHI_LIVE_TAKE_CENTS", 2) or 0)
     tif = str(
-        getattr(config, "KALSHI_LIVE_TIME_IN_FORCE", "immediate_or_cancel")
+        time_in_force
+        or getattr(config, "KALSHI_LIVE_TIME_IN_FORCE", "immediate_or_cancel")
         or "immediate_or_cancel"
     ).strip().lower()
     if tif not in ("immediate_or_cancel", "fill_or_kill", "good_till_canceled"):

@@ -1,6 +1,6 @@
-# Kalshi 15m paper bot — project state
+# Kalshi 15m bot — project state
 
-Updated: 2026-07-28
+Updated: 2026-09-04
 
 ## What this is
 
@@ -46,7 +46,18 @@ python -c "from kalshi_cycle import run_once; import json; print(json.dumps(run_
 
 ## Safety
 
-- `KALSHI_PAPER_ONLY=true` until Gate 3 paper soak passes.
+- Live risk caps: sizing bankroll = `min(live balance, KALSHI_BANKROLL_USD)`,
+  `KALSHI_DEPLOY_PCT` per trade, `KALSHI_MAX_DEPLOY_PCT` hard cap,
+  `KALSHI_MAX_NOTIONAL_USD` absolute ceiling (0 = off). Exits (`closing=True`
+  orders) bypass entry caps — they are risk-reducing.
 - Secrets live in `secrets/` and `.env` (gitignored).
 - Do not reuse the spot bot Telegram token or `ledger.db`.
-- Default `ENABLED_BOTS=adverse`, `HTF_REFRESH_MODE=every_near_tick` (see `.env.example`).
+- Production (VPS 45.33.97.27, `/opt/kalshi-15m-bot`, systemd `kalshi-bot`):
+  `ENABLED_BOTS=eva_wick`, zero-Claude, direction from hub EVA stances.
+
+## Changelog
+
+| Date | Change |
+|------|--------|
+| 2026-09-04 | **Live trading enabled** (`KALSHI_PAPER_ONLY=false`). Fixed two paper→live gaps: (1) eva_wick entries now priced at side mid (`entry_at_mid=True`) instead of the legacy mid−3¢ "intended limit", which a live IOC (+`KALSHI_LIVE_TAKE_CENTS`) could never fill; (2) eva_wick take-profit now executes a real exchange exit — buys the opposite side fill-or-kill so Kalshi nets the position — and only flattens the ledger at the actual fill; unfilled exits stay open and retry next tick. Known accounting gap: Kalshi taker fees (~1–2¢/contract/side) are not modeled in the ledger, so ledger P&L runs slightly hot vs the account balance. |
+| 2026-09-03 | eva_wick strategy added (zero-Claude wick fade/overshoot off hub EVA stances); deployed to VPS with Telegram broadcasts + charts; paper soak overnight. |

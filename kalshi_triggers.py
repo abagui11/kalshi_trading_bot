@@ -420,10 +420,14 @@ def compose_kalshi_rules_rationale(
             if minutes_left > BLOCK_LAST_MINUTES
             else f"minutes_left={minutes_left:.1f} — last-{BLOCK_LAST_MINUTES:.0f}m (blocked unless exception)"
         )
+    improve = _side_mid(side, yes_mid_cents) - float(limit_cents)
+    limit_note = (
+        f"(−{improve:.0f}¢ favorable)" if improve >= 0.5 else "(at mid — live IOC takes)"
+    )
     parts = [
         f"KalshiRules session: {session}.",
         f"KalshiRules entry: {side} mid≈{_side_mid(side, yes_mid_cents):.1f}¢ → "
-        f"intended limit ~{limit_cents:.1f}¢ (−{LIMIT_IMPROVE_CENTS:.0f}¢ favorable); "
+        f"intended limit ~{limit_cents:.1f}¢ {limit_note}; "
         f"fill/paper {entry_cents:.1f}¢; NEVER BUY >{MAX_ENTRY_CENTS:.0f}¢; "
         f"prefer ≤{PREFERRED_MAX_ENTRY_CENTS:.0f}¢ for ~2× payout.",
         f"KalshiRules block/execute: {block}"

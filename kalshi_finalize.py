@@ -116,6 +116,7 @@ def finalize_directional(
     require_edge: bool = True,
     allow_rich: bool = False,
     deploy_pct: float | None = None,
+    entry_at_mid: bool = False,
 ) -> KalshiSuggestion:
     """Apply shared KalshiRules gates and size a YES/NO suggestion (or skip)."""
     min_edge = float(bot_config.KALSHI_MIN_EDGE_CENTS)
@@ -195,7 +196,10 @@ def finalize_directional(
             sug.entry_chart_path = entry_chart_path
             return attach_htf_tags(sug, htf_bias=htf_bias, side=None)
 
-    if use_lottery:
+    if use_lottery or entry_at_mid:
+        # entry_at_mid: price the book at the side mid so a live IOC
+        # (mid + KALSHI_LIVE_TAKE_CENTS) can actually cross the spread.
+        # The −3¢ "intended limit" model never fills as a live IOC.
         entry_cents = mid_side
     else:
         entry_cents = kalshi_triggers.intended_limit_cents(side, float(mid))
