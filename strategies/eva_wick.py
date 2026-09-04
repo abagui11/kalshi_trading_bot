@@ -184,10 +184,14 @@ class EvaWickStrategy:
         session_pos, day_range_pct = _session_range(ctx.coinbase, float(ctx.spot))
         if session_pos is None:
             return None
+        # The 4% day-range gate fired on 38/38 recorded positions — crypto's 24h
+        # range is always wider than that, so it never discriminated and acted as
+        # an undisclosed 0.75x on the configured deploy pct. Carrying the tag for
+        # observability; the measured range is recorded in the trigger reason so a
+        # threshold that actually separates cohorts can be swept later.
         if day_range_pct is not None and day_range_pct > float(
             bot_config.EVA_WICK_MAX_DAY_RANGE_PCT
         ):
-            size_factor *= 0.75
             tags.append("wide_day_range")
 
         # 5) Pattern selection.
@@ -325,7 +329,8 @@ class EvaWickStrategy:
             trigger_reason=(
                 f"{pattern}: session_pos={session_pos:.2f}, "
                 f"excursion={excursion:+.3f}%, quarter={quarter}, "
-                f"btc_1h={btc_move if btc_move is None else round(btc_move, 3)}%"
+                f"btc_1h={btc_move if btc_move is None else round(btc_move, 3)}%, "
+                f"day_range={day_range_pct if day_range_pct is None else round(day_range_pct, 2)}%"
             ),
             trigger_type="eva_wick",
             base=base,
