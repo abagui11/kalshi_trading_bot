@@ -443,6 +443,63 @@ def _cost_usd(entry_cents: float, contracts: int) -> float:
     return (float(entry_cents) / 100.0) * int(contracts)
 
 
+def available_cash(bot_id: str | None = None) -> float:
+    """Current paper-book cash for a bot (0 if the row is missing)."""
+    init_db()
+    bid = bot_id or DEFAULT_BOT_ID
+    with _connect() as conn:
+        _ensure_bot_state(conn, bid)
+        row = conn.execute(
+            "SELECT cash_usd FROM paper_state WHERE bot_id = ?", (bid,)
+        ).fetchone()
+    return float(row["cash_usd"]) if row else 0.0
+
+
+def can_afford(entry_cents: float, contracts: int, *, bot_id: str | None = None) -> bool:
+    """True when the paper book has enough cash for this fill.
+
+    Call this *before* a live order. After the $450 size-up the paper soak
+    book ran dry while Kalshi still had cash, so IOC fills landed that the
+    ledger then refused — silent account/book divergence.
+    """
+    return _cost_usd(entry_cents, contracts) <= available_cash(bot_id) + 1e-9
+
+
+def sync_live_cash(
+    cash_usd: float,
+    *,
+    starting_usd: float | None = None,
+    bot_id: str | None = None,
+) -> None:
+    """Point the paper book at the live sleeve without wiping history.
+
+    ``starting_usd`` is the live-era bankroll (the $450 we moved to shard 2).
+    Realized is set to cash − starting so the dashboard matches the account
+    rather than the leftover $66 soak book.
+    """
+    init_db()
+    bid = bot_id or DEFAULT_BOT_ID
+    cash = float(cash_usd)
+    with _connect() as conn:
+        _ensure_bot_state(conn, bid)
+        start = starting_usd
+        if start is None:
+            row = conn.execute(
+                "SELECT starting_usd FROM paper_state WHERE bot_id = ?", (bid,)
+            ).fetchone()
+            start = float(row["starting_usd"]) if row else _starting_usd()
+        start = float(start)
+        conn.execute(
+            """
+            UPDATE paper_state
+            SET starting_usd = ?, cash_usd = ?, realized_pnl_usd = ?, updated_at = ?
+            WHERE bot_id = ?
+            """,
+            (start, cash, cash - start, _now(), bid),
+        )
+        conn.commit()
+
+
 def open_trade(suggestion: KalshiSuggestion) -> dict[str, Any] | None:
     """Paper-fill a YES/NO suggestion at entry_cents. Debits that bot's cash."""
     init_db()

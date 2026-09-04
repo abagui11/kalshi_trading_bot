@@ -851,6 +851,37 @@ def apply_and_log(
         else:
             try:
                 kalshi_sizing.assert_order_allowed(suggestion.contracts, entry)
+                if not paper.can_afford(
+                    entry, suggestion.contracts, bot_id=suggestion.bot_id
+                ):
+                    suggestion = kalshi_finalize.make_skip(
+                        rationale=(
+                            f"signal was {suggestion.side} but paper book cannot "
+                            f"cover {suggestion.contracts} ct @ {entry:.1f}¢ "
+                            f"(have ${paper.available_cash(suggestion.bot_id):.2f}). "
+                            f"Not sending a live order that the ledger would refuse. "
+                            f"Original why: {suggestion.rationale}"
+                        ),
+                        base={
+                            "series": suggestion.series,
+                            "market_ticker": suggestion.market_ticker,
+                            "product_id": suggestion.product_id,
+                            "mid_cents": suggestion.mid_cents,
+                            "fair_yes_cents": suggestion.fair_yes_cents,
+                            "edge_cents": suggestion.edge_cents,
+                            "expiry_ts": suggestion.expiry_ts,
+                            "spot": suggestion.spot,
+                            "strike": suggestion.strike,
+                            "cycle_id": suggestion.cycle_id,
+                            "bot_id": suggestion.bot_id,
+                        },
+                        skip_codes=["paper_open_failed"],
+                        trigger_type=suggestion.trigger_type or "none",
+                    )
+                    suggestion.bot_id = suggestion.bot_id or "control"
+                    paper.log_decision(suggestion)
+                    _notify_decision(suggestion, market=market, opened=False)
+                    return suggestion
                 order_resp = kalshi_client.place_order(
                     suggestion.market_ticker,
                     suggestion.side,
