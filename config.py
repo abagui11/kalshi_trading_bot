@@ -123,6 +123,11 @@ KALSHI_USE_LIVE_BALANCE: bool = _optional_bool("KALSHI_USE_LIVE_BALANCE", defaul
 # Live IOC must cross the book; paper filled at mid with no counterparty.
 # Add this many cents of aggression on the *side* we buy (YES bid up / NO ask down).
 KALSHI_LIVE_TAKE_CENTS: float = float(os.getenv("KALSHI_LIVE_TAKE_CENTS", "2") or "2")
+# Kalshi exchange shard these series trade on (sharded 2026-08-24; crypto = 2).
+# Collateral is per-shard, so sizing reads this shard's balance, not the
+# cross-shard aggregate. Re-read from a market's `exchange_index` if Kalshi
+# reassigns the category.
+KALSHI_EXCHANGE_INDEX: int = int(os.getenv("KALSHI_EXCHANGE_INDEX", "2") or "2")
 KALSHI_LIVE_TIME_IN_FORCE: str = (
     (_optional("KALSHI_LIVE_TIME_IN_FORCE") or "immediate_or_cancel").strip().lower()
 )

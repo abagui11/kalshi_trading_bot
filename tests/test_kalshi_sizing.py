@@ -30,6 +30,24 @@ class KalshiSizingTests(unittest.TestCase):
                             kalshi_sizing.sizing_bankroll_usd(), 76.47, places=2
                         )
 
+    def test_sizing_uses_this_shard_not_cross_shard_aggregate(self) -> None:
+        """Collateral is per-shard; the aggregate is not spendable here."""
+        balance = {
+            "balance_dollars": "454.90",  # aggregate across all shards
+            "balance_breakdown": [
+                {"exchange_index": 0, "balance": "384.90"},
+                {"exchange_index": 2, "balance": "40.00"},  # crypto shard
+            ],
+        }
+        with patch.object(bot_config, "KALSHI_BANKROLL_USD", 200.0):
+            with patch.object(bot_config, "KALSHI_USE_LIVE_BALANCE", True):
+                with patch.object(bot_config, "KALSHI_EXCHANGE_INDEX", 2):
+                    with patch("config.KALSHI_PAPER_ONLY", False):
+                        with patch("kalshi_client.get_balance", return_value=balance):
+                            self.assertAlmostEqual(
+                                kalshi_sizing.sizing_bankroll_usd(), 40.00, places=2
+                            )
+
     def test_assert_rejects_oversized(self) -> None:
         with patch.object(bot_config, "KALSHI_MAX_CONTRACTS", 5):
             with patch.object(bot_config, "KALSHI_MAX_NOTIONAL_USD", 5.0):

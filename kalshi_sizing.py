@@ -26,6 +26,30 @@ def max_contracts_cap() -> int:
     return max(0, int(bot_config.KALSHI_MAX_CONTRACTS))
 
 
+def _spendable_usd(bal: dict) -> float | None:
+    """Cash actually usable for these markets, in dollars.
+
+    Kalshi sharded on 2026-08-24 and collateral does not move across shards, so
+    the top-level balance fields are a cross-shard aggregate that cannot all be
+    spent here. Prefer this series' shard from ``balance_breakdown``; only fall
+    back to the aggregate when the breakdown is missing.
+    """
+    shard = int(getattr(bot_config, "KALSHI_EXCHANGE_INDEX", 2))
+    for row in bal.get("balance_breakdown") or []:
+        try:
+            if int(row["exchange_index"]) == shard:
+                return max(0.0, float(row["balance"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if bal.get("balance_dollars") is not None:
+        return max(0.0, float(bal["balance_dollars"]))
+    for key in ("balance", "portfolio_value"):
+        if bal.get(key) is not None:
+            raw = float(bal[key])
+            return raw / 100.0 if raw > 1000 else raw
+    return None
+
+
 def sizing_bankroll_usd() -> float:
     """Bankroll used for % deploy sizing.
 
@@ -38,18 +62,16 @@ def sizing_bankroll_usd() -> float:
     try:
         import kalshi_client
 
-        bal = kalshi_client.get_balance()
-        live: float | None = None
-        if bal.get("balance_dollars") is not None:
-            live = max(0.0, float(bal["balance_dollars"]))
-        elif bal.get("balance") is not None:
-            raw = float(bal["balance"])
-            live = raw / 100.0 if raw > 1000 else raw
-        elif bal.get("portfolio_value") is not None:
-            raw = float(bal["portfolio_value"])
-            live = raw / 100.0 if raw > 1000 else raw
+        live = _spendable_usd(kalshi_client.get_balance())
         if live is None:
             return configured
+        if live < configured:
+            logger.info(
+                "Sizing off shard-%s balance $%.2f (below configured $%.2f)",
+                getattr(bot_config, "KALSHI_EXCHANGE_INDEX", 2),
+                live,
+                configured,
+            )
         return min(live, configured)
     except Exception:
         logger.exception(
