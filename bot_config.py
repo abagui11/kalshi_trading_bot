@@ -163,6 +163,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "adverse": "Adverse / wick-hunt",
     "eva_wick": "EVA wick",
     "eva_streak": "EVA reversal",
+    "eva_arb": "EVA arb",
 }
 
 # Shared ICT/HTF Claude refresh (aliases to config).
@@ -236,6 +237,17 @@ EVA_STREAK_TP_MULTIPLE = 2.0  # cash the reversal when the side doubles
 EVA_STREAK_SL_FRACTION = 0.5  # cut when the side halves — "never fully lose"
 EVA_STREAK_COOLDOWN_LOSSES = 2  # this many consecutive SL cuts ...
 EVA_STREAK_COOLDOWN_MINUTES = 90.0  # ... pauses new entries this long
+
+# EVA arb bot (last-2-min inefficiency, paper since 2026-09-08). Premise:
+# Kalshi stops taking prices ~45s before close, so a favorite that already
+# touched 90c and dips back to 75-85c late is a discounted near-certain
+# winner IF the dip is noise. Logger evidence so far is mixed (~70% settle
+# vs ~80c cost) — paper-only until the book proves otherwise.
+EVA_ARB_WINDOW_MINUTES = 2.0  # only act inside the final N minutes
+EVA_ARB_TOUCH_CENTS = 90.0  # favored side must have printed >= this once
+EVA_ARB_MIN_ENTRY_CENTS = 75.0  # buy zone lower bound (side mid)
+EVA_ARB_MAX_ENTRY_CENTS = 85.0  # buy zone upper bound (side mid)
+EVA_ARB_MIN_SECONDS_LEFT = 50.0  # Kalshi stops matching ~45s out — too late
 
 
 def qty_caps(product_id: str) -> tuple[float, float]:
