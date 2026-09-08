@@ -120,7 +120,10 @@ class EvaWickStrategy:
         if mid is None:
             return None
 
-        # 1) Manage an open position first (take-profit runs every tick).
+        # 1) Manage an open position first (runs every tick): boss double-down
+        #    rule, then take-profit.
+        if self._maybe_double_down(ctx):
+            return None
         if self._maybe_take_profit(ctx):
             return None
         if paper.has_open_for_market(ctx.market_ticker, bot_id=self.bot_id):
@@ -387,6 +390,117 @@ class EvaWickStrategy:
             )
         return sug
 
+    # ---------------------------------------------------------- double-down
+    def _maybe_double_down(self, ctx: SharedCycleContext) -> bool:
+        """Boss scale-in rule (paper experiment, 2026-09-08).
+
+        Bought in the 29-33¢ band and the side dips under 12¢ → double the
+        position at the prevailing mid (~11¢). If it recovers to 29¢ → sell
+        the added contracts and let the original ride. Paper-only: never runs
+        while eva_wick routes live orders, so the ledger and the exchange
+        account cannot diverge.
+        """
+        if not bool(bot_config.EVA_WICK_DD_ENABLED):
+            return False
+        if bot_config.bot_is_live(self.bot_id):
+            return False
+        mid = ctx.yes_mid_cents
+        if mid is None:
+            return False
+        try:
+            positions = paper.get_open_positions(bot_id=self.bot_id)
+        except Exception:
+            logger.exception("eva_wick: open-position lookup failed (dd)")
+            return False
+        for pos in positions:
+            if str(pos.get("market_ticker")) != ctx.market_ticker:
+                continue
+            pos_id = int(pos["id"])
+            side = str(pos.get("side") or "").upper()
+            contracts = int(pos.get("contracts") or 0)
+            entry = float(pos.get("entry_cents") or 0)
+            if entry <= 0 or contracts < 1:
+                continue
+            side_now = kalshi_triggers.side_mid_cents(side, float(mid))
+            arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
+            meta = _arm_meta(arm) if arm else {}
+            dd_added = int(meta.get("dd_added") or 0)
+
+            if dd_added > 0:
+                # Recovery leg: trim the add, keep the original runner.
+                if side_now < float(bot_config.EVA_WICK_DD_TRIM_CENTS):
+                    continue
+                sell = min(dd_added, contracts - 1)
+                if sell < 1:
+                    continue
+                updated = paper.scale_out_position(
+                    pos_id,
+                    sell_contracts=sell,
+                    price_cents=side_now,
+                    reason="eva_wick_dd_trim",
+                )
+                if updated is None:
+                    continue
+                paper.update_window_arm_meta(
+                    self.bot_id, ctx.market_ticker, {"dd_added": 0, "dd_trimmed": 1}
+                )
+                self._notify_dd(
+                    ctx,
+                    f"↩️ [eva_wick] Double-down cashed {ctx.market_ticker}: sold "
+                    f"{sell} {side} back at {side_now:.0f}¢ (added near "
+                    f"{float(meta.get('dd_add_price') or 0):.0f}¢). Original "
+                    f"{contracts - sell} ct rides.",
+                )
+                return True
+
+            # Add leg: original entry in band, side crushed under the trigger.
+            orig_entry = float(meta.get("dd_orig_entry") or entry)
+            if not (
+                float(bot_config.EVA_WICK_DD_MIN_ENTRY_CENTS)
+                <= orig_entry
+                <= float(bot_config.EVA_WICK_DD_MAX_ENTRY_CENTS)
+            ):
+                continue
+            if side_now > float(bot_config.EVA_WICK_DD_TRIGGER_CENTS) or side_now <= 0:
+                continue
+            if meta.get("dd_trimmed"):  # one round trip per window
+                continue
+            updated = paper.scale_in_position(
+                pos_id,
+                add_contracts=contracts,
+                price_cents=side_now,
+                reason="eva_wick_dd_add",
+            )
+            if updated is None:
+                continue
+            paper.update_window_arm_meta(
+                self.bot_id,
+                ctx.market_ticker,
+                {
+                    "dd_added": contracts,
+                    "dd_orig_entry": orig_entry,
+                    "dd_add_price": side_now,
+                },
+            )
+            self._notify_dd(
+                ctx,
+                f"🎯 [eva_wick] Double-down {ctx.market_ticker}: {side} crushed to "
+                f"{side_now:.0f}¢ from a {orig_entry:.0f}¢ entry — adding "
+                f"{contracts} ct (boss rule: back the same read at a better "
+                f"price; trim at {bot_config.EVA_WICK_DD_TRIM_CENTS:.0f}¢).",
+            )
+            return True
+        return False
+
+    @staticmethod
+    def _notify_dd(ctx: SharedCycleContext, text: str) -> None:
+        try:
+            import notify
+
+            notify.broadcast_plain_text(text)
+        except Exception:
+            logger.exception("eva_wick: dd notify failed")
+
     # ---------------------------------------------------------- take-profit
     def _maybe_take_profit(self, ctx: SharedCycleContext) -> bool:
         """Flatten an open position early when the side roughly doubles.
@@ -414,7 +528,12 @@ class EvaWickStrategy:
             pos_side = str(pos.get("side") or "").upper()
             contracts = int(pos.get("contracts") or 0)
             side_now = kalshi_triggers.side_mid_cents(pos_side, float(mid))
-            target = entry * float(bot_config.EVA_WICK_TP_MULTIPLE)
+            # After a double-down the stored entry is the blended average;
+            # the TP target stays anchored to the original entry.
+            arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
+            meta = _arm_meta(arm) if arm else {}
+            tp_base = float(meta.get("dd_orig_entry") or entry)
+            target = tp_base * float(bot_config.EVA_WICK_TP_MULTIPLE)
             if side_now < target:
                 continue
 
@@ -470,6 +589,7 @@ class EvaWickStrategy:
                 yes_price_cents=int(round(opp_mid)),
                 time_in_force="fill_or_kill",
                 closing=True,
+                paper=not bot_config.bot_is_live("eva_wick"),
             )
         except Exception:
             logger.exception(

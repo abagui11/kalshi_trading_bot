@@ -325,6 +325,7 @@ def place_order(
     yes_price_cents: int | None = None,
     time_in_force: str | None = None,
     closing: bool = False,
+    paper: bool = False,
 ) -> dict[str, Any]:
     """Place a live order via Create Order V2.
 
@@ -335,6 +336,10 @@ def place_order(
     net out an open position): notional/contract entry caps do not apply, and
     ``time_in_force`` may override the config default (e.g. fill_or_kill so an
     exit is all-or-nothing and the book never splits from the account).
+
+    ``paper=True`` forces the paper stub for this call even when the global
+    KALSHI_PAPER_ONLY is off — per-bot routing (bot_config.bot_is_live) so
+    paper experiment bots can share the loop with the live book.
 
     No-op stub when KALSHI_PAPER_ONLY=true.
     """
@@ -350,9 +355,10 @@ def place_order(
             logger.error("Refusing order: %s", exc)
             return {"status": "rejected", "error": str(exc), "ticker": ticker}
 
-    if config.KALSHI_PAPER_ONLY:
+    if config.KALSHI_PAPER_ONLY or paper:
         logger.info(
-            "PAPER_ONLY: skip live order %s %s x%s @ %s",
+            "PAPER%s: skip live order %s %s x%s @ %s",
+            "_ONLY" if config.KALSHI_PAPER_ONLY else "-BOT",
             ticker,
             side,
             contracts,

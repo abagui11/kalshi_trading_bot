@@ -887,6 +887,7 @@ def apply_and_log(
                     suggestion.side,
                     suggestion.contracts,
                     yes_price_cents=int(round(entry)),
+                    paper=not bot_config.bot_is_live(suggestion.bot_id),
                 )
             except Exception:
                 logger.exception(

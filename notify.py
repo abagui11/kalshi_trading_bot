@@ -15,6 +15,7 @@ from pathlib import Path
 from telegram import Bot, InputFile
 
 import access
+import bot_config
 import config
 import paper
 from models import KalshiSuggestion
@@ -36,7 +37,8 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
     )
     stats = paper.get_stats(bot_id=suggestion.bot_id or "control")
     bot = suggestion.bot_id or "control"
-    filled_label = "PAPER TRADE" if config.KALSHI_PAPER_ONLY else "LIVE FILL"
+    bot_live = bot_config.bot_is_live(bot)
+    filled_label = "LIVE FILL" if bot_live else "PAPER TRADE"
     header = (
         f"Kalshi 15m [{bot}] {filled_label}"
         if suggestion.is_trade() and opened
@@ -93,7 +95,7 @@ def format_decision_card(suggestion: KalshiSuggestion, *, opened: bool = False) 
             f"{' · contra' if suggestion.market_agree is False else (' · agree' if suggestion.market_agree else '')}"
             f" · max {config.KALSHI_MAX_DEPLOY_PCT*100:.0f}% book",
             f"Expiry / close: {expiry}",
-            f"{'Paper' if config.KALSHI_PAPER_ONLY else 'Book'} equity: "
+            f"{'Book' if bot_live else 'Paper'} equity: "
             f"${stats['equity_usd']:.2f} | open {stats['open_count']} | "
             f"{stats['wins']}W/{stats['losses']}L",
             "",

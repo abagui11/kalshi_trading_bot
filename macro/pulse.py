@@ -79,7 +79,9 @@ def _side_exit_cents(pos: dict[str, Any]) -> float | None:
 
 def _try_live_close(pos: dict[str, Any], exit_cents: float) -> dict[str, Any] | None:
     """Best-effort live close by buying the opposite side (locks settlement)."""
-    if config.KALSHI_PAPER_ONLY:
+    import bot_config
+
+    if not bot_config.bot_is_live(str(pos.get("bot_id") or "control")):
         return None
     try:
         import kalshi_client

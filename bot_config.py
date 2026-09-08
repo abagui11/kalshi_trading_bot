@@ -114,6 +114,22 @@ KALSHI_USE_LIVE_BALANCE = config.KALSHI_USE_LIVE_BALANCE
 KALSHI_LIVE_TAKE_CENTS = config.KALSHI_LIVE_TAKE_CENTS
 KALSHI_EXCHANGE_INDEX = config.KALSHI_EXCHANGE_INDEX
 KALSHI_LIVE_TIME_IN_FORCE = config.KALSHI_LIVE_TIME_IN_FORCE
+KALSHI_LIVE_BOTS = config.KALSHI_LIVE_BOTS
+
+
+def bot_is_live(bot_id: str | None) -> bool:
+    """True when this bot may send real orders (entries and exits).
+
+    KALSHI_PAPER_ONLY=true blankets everything paper. Otherwise, an empty
+    KALSHI_LIVE_BOTS keeps the legacy behavior (all bots live), and a
+    non-empty list is a whitelist — e.g. KALSHI_LIVE_BOTS=eva_streak keeps
+    eva_wick's control book on paper while the streak bot trades the account.
+    """
+    if config.KALSHI_PAPER_ONLY:
+        return False
+    if not config.KALSHI_LIVE_BOTS:
+        return True
+    return str(bot_id or "control") in config.KALSHI_LIVE_BOTS
 
 # Conviction × agree/contra deploy matrix (fraction of book).
 CONVICTION_HIGH_SCORE = 0.75
@@ -146,6 +162,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
     "eva_wick": "EVA wick (fade/overshoot)",
+    "eva_streak": "EVA streak (Dan reversal)",
 }
 
 # Shared ICT/HTF Claude refresh (aliases to config).
@@ -196,6 +213,29 @@ EVA_WICK_STRONG_M15_CONF = 0.65
 EVA_WICK_SOFT_FACTOR = 0.5
 EVA_WICK_PRIORITY_BOOST = 1.25
 EVA_WICK_TP_MULTIPLE = config.EVA_WICK_TP_MULTIPLE
+# Boss double-down rule (2026-09-08, paper experiment on the control book):
+# bought in the 29-33¢ band and the side dips under 12¢ → add the same size
+# (~11¢); if it climbs back to 29¢ → sell the added contracts (keep original).
+# Paper-only: skipped whenever eva_wick routes live (bot_is_live).
+EVA_WICK_DD_ENABLED = True
+EVA_WICK_DD_MIN_ENTRY_CENTS = 29.0
+EVA_WICK_DD_MAX_ENTRY_CENTS = 33.0
+EVA_WICK_DD_TRIGGER_CENTS = 12.0
+EVA_WICK_DD_TRIM_CENTS = 29.0
+
+# EVA streak bot (Dan's streak-reversal signal, mid entry since 2026-09-08).
+# Evidence: backtest/dan_rules_study.py + dan_rules_pricing.py — reversal after
+# k>=3 same-direction 15m candles hits 52-56% while the market charges ~51c.
+# backtest/eva_streak_bt.py: the 35c resting-limit entry was adverse selection
+# (only fills when the streak keeps running) — mid entry keeps every signal.
+EVA_STREAK_MIN_RUN = 3  # consecutive same-direction 15m candles required
+EVA_STREAK_MAX_LOOKBACK = 8  # candles inspected for the run (fetch bound)
+EVA_STREAK_REQUIRE_SWEEP = True  # last run candle must take the prior extreme
+EVA_STREAK_MIN_SIDE_MID = 20.0  # side already a longshot -> trend, not a wick
+EVA_STREAK_TP_MULTIPLE = 2.0  # cash the reversal when the side doubles
+EVA_STREAK_SL_FRACTION = 0.5  # cut when the side halves — "never fully lose"
+EVA_STREAK_COOLDOWN_LOSSES = 2  # this many consecutive SL cuts ...
+EVA_STREAK_COOLDOWN_MINUTES = 90.0  # ... pauses new entries this long
 
 
 def qty_caps(product_id: str) -> tuple[float, float]:

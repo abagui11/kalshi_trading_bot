@@ -1,0 +1,14 @@
+[Unit]
+Description=Kalshi last-2-min quote logger (Eva #3 arb evidence, no trading)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kalshi-15m-bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/kalshi-15m-bot/.venv/bin/python deploy/lastmin_logger.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

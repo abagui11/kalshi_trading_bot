@@ -1000,6 +1000,212 @@ def flatten_position_early(
         return dict(closed) if closed else None
 
 
+def scale_in_position(
+    position_id: int,
+    *,
+    add_contracts: int,
+    price_cents: float,
+    reason: str = "scale_in",
+) -> dict[str, Any] | None:
+    """Add contracts to an open position at a new price (paper).
+
+    Entry becomes the weighted average; cash is debited. Returns the updated
+    position row or None (missing/closed position, bad size, or no cash).
+    """
+    init_db()
+    add = int(add_contracts)
+    px = max(0.0, min(100.0, float(price_cents)))
+    if add < 1:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ? AND status = 'open'",
+            (int(position_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        pos_bot = str(row["bot_id"] if "bot_id" in row.keys() else DEFAULT_BOT_ID)
+        cost = _cost_usd(px, add)
+        _ensure_bot_state(conn, pos_bot)
+        state = conn.execute(
+            "SELECT cash_usd FROM paper_state WHERE bot_id = ?", (pos_bot,)
+        ).fetchone()
+        cash = float(state["cash_usd"]) if state else 0.0
+        if cost > cash + 1e-9:
+            logger.warning(
+                "scale_in: insufficient paper cash for %s (have %.2f need %.2f)",
+                pos_bot,
+                cash,
+                cost,
+            )
+            return None
+        old_ct = int(row["contracts"])
+        old_entry = float(row["entry_cents"])
+        new_ct = old_ct + add
+        new_entry = (old_entry * old_ct + px * add) / new_ct
+        now = _now()
+        rationale = (
+            str(row["rationale"] or "") + f" | {reason} +{add}ct @ {px:.1f}¢"
+        ).strip()
+        conn.execute(
+            "UPDATE paper_positions SET contracts = ?, entry_cents = ?, rationale = ?"
+            " WHERE id = ?",
+            (new_ct, new_entry, rationale, int(row["id"])),
+        )
+        conn.execute(
+            "UPDATE paper_state SET cash_usd = ?, updated_at = ? WHERE bot_id = ?",
+            (cash - cost, now, pos_bot),
+        )
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                bot_id, ts, event, series, market_ticker, product_id, side,
+                contracts, entry_cents, rationale
+            ) VALUES (?, ?, 'scale_in', ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                pos_bot,
+                now,
+                row["series"],
+                row["market_ticker"],
+                row["product_id"],
+                str(row["side"]).upper(),
+                add,
+                px,
+                reason,
+            ),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ?", (int(row["id"]),)
+        ).fetchone()
+        return dict(updated) if updated else None
+
+
+def scale_out_position(
+    position_id: int,
+    *,
+    sell_contracts: int,
+    price_cents: float,
+    reason: str = "scale_out",
+) -> dict[str, Any] | None:
+    """Sell part of an open position at a side mark (paper partial exit).
+
+    Realizes (price − avg entry) × sold on that bot's book. Selling every
+    contract behaves like ``flatten_position_early``. Returns the updated
+    (or closed) position row, or None when the position/size is invalid.
+    """
+    init_db()
+    sell = int(sell_contracts)
+    px = max(0.0, min(100.0, float(price_cents)))
+    if sell < 1:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ? AND status = 'open'",
+            (int(position_id),),
+        ).fetchone()
+        if row is None:
+            return None
+        old_ct = int(row["contracts"])
+        if sell > old_ct:
+            return None
+        pos_bot = str(row["bot_id"] if "bot_id" in row.keys() else DEFAULT_BOT_ID)
+        entry = float(row["entry_cents"])
+        payout_usd = (px / 100.0) * sell
+        pnl_usd = ((px - entry) / 100.0) * sell
+        now = _now()
+        _ensure_bot_state(conn, pos_bot)
+        state = conn.execute(
+            "SELECT cash_usd, realized_pnl_usd FROM paper_state WHERE bot_id = ?",
+            (pos_bot,),
+        ).fetchone()
+        cash = float(state["cash_usd"]) if state else 0.0
+        realized = float(state["realized_pnl_usd"]) if state else 0.0
+        rationale = (
+            str(row["rationale"] or "") + f" | {reason} -{sell}ct @ {px:.1f}¢"
+        ).strip()
+        remaining = old_ct - sell
+        if remaining > 0:
+            conn.execute(
+                "UPDATE paper_positions SET contracts = ?, rationale = ?"
+                " WHERE id = ?",
+                (remaining, rationale, int(row["id"])),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE paper_positions
+                SET status = 'closed', result = 'flat', payout_usd = ?,
+                    pnl_usd = ?, closed_at = ?, rationale = ?, contracts = ?
+                WHERE id = ?
+                """,
+                (payout_usd, pnl_usd, now, rationale, old_ct, int(row["id"])),
+            )
+        conn.execute(
+            """
+            UPDATE paper_state
+            SET cash_usd = ?, realized_pnl_usd = ?, updated_at = ?
+            WHERE bot_id = ?
+            """,
+            (cash + payout_usd, realized + pnl_usd, now, pos_bot),
+        )
+        conn.execute(
+            """
+            INSERT INTO paper_trades (
+                bot_id, ts, event, series, market_ticker, product_id, side,
+                contracts, entry_cents, result, payout_usd, pnl_usd, rationale
+            ) VALUES (?, ?, 'scale_out', ?, ?, ?, ?, ?, ?, 'flat', ?, ?, ?)
+            """,
+            (
+                pos_bot,
+                now,
+                row["series"],
+                row["market_ticker"],
+                row["product_id"],
+                str(row["side"]).upper(),
+                sell,
+                entry,
+                payout_usd,
+                pnl_usd,
+                reason,
+            ),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM paper_positions WHERE id = ?", (int(row["id"]),)
+        ).fetchone()
+        return dict(updated) if updated else None
+
+
+def update_window_arm_meta(
+    bot_id: str, market_ticker: str, updates: dict[str, Any]
+) -> None:
+    """Merge keys into an existing window arm's meta_json (no-op if unarmed)."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT meta_json FROM bot_window_state"
+            " WHERE bot_id = ? AND market_ticker = ?",
+            (bot_id, market_ticker),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            meta = json.loads(row["meta_json"] or "{}")
+        except ValueError:
+            meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta.update(updates)
+        conn.execute(
+            "UPDATE bot_window_state SET meta_json = ?"
+            " WHERE bot_id = ? AND market_ticker = ?",
+            (json.dumps(meta), bot_id, market_ticker),
+        )
+        conn.commit()
+
+
 def get_closed_positions(
     limit: int = 50,
     *,

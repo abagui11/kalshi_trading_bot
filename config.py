@@ -138,6 +138,14 @@ ENABLED_BOTS: tuple[str, ...] = tuple(
     s.strip() for s in _bots_raw.split(",") if s.strip()
 ) or ("control",)
 
+# Which enabled bots may send real orders (entries AND exits). Everyone else
+# paper-trades even when KALSHI_PAPER_ONLY=false. Empty = all bots live
+# (legacy single-bot behavior). Ignored entirely when KALSHI_PAPER_ONLY=true.
+_live_bots_raw = _optional("KALSHI_LIVE_BOTS") or ""
+KALSHI_LIVE_BOTS: tuple[str, ...] = tuple(
+    s.strip() for s in _live_bots_raw.split(",") if s.strip()
+)
+
 # Macro news RSS feeds (comma-separated). Used when MACRO_CONTEXT_ENABLED.
 _macro_feeds_raw = _optional("MACRO_FEED_URLS") or (
     "https://www.federalreserve.gov/feeds/press_all.xml,"
