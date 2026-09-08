@@ -161,8 +161,8 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "control": "Control (conviction ICT)",
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
-    "eva_wick": "EVA wick (fade/overshoot)",
-    "eva_streak": "EVA streak (Dan reversal)",
+    "eva_wick": "EVA wick",
+    "eva_streak": "EVA reversal",
 }
 
 # Shared ICT/HTF Claude refresh (aliases to config).

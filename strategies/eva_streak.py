@@ -120,7 +120,7 @@ def detect_streak(
 
 class EvaStreakStrategy:
     bot_id = "eva_streak"
-    display_name = "EVA streak (Dan reversal)"
+    display_name = "EVA reversal"
     needs_htf_bias = False
 
     # ---------------------------------------------------------------- decide
