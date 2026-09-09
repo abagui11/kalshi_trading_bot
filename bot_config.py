@@ -218,21 +218,25 @@ EVA_WICK_TP_MULTIPLE = config.EVA_WICK_TP_MULTIPLE
 # bought in the 29-33¢ band and the side dips under 12¢ → add the same size
 # (~11¢); if it climbs back to 29¢ → sell the added contracts (keep original).
 # Paper-only: skipped whenever eva_wick routes live (bot_is_live).
-EVA_WICK_DD_ENABLED = True
+EVA_WICK_DD_ENABLED = False  # disabled 2026-09-09: 0/5 adds, −$1.96 in experiment epoch
 EVA_WICK_DD_MIN_ENTRY_CENTS = 29.0
 EVA_WICK_DD_MAX_ENTRY_CENTS = 33.0
 EVA_WICK_DD_TRIGGER_CENTS = 12.0
 EVA_WICK_DD_TRIM_CENTS = 29.0
 
-# EVA streak bot (Dan's streak-reversal signal, mid entry since 2026-09-08).
+# EVA streak bot (streak-reversal signal, mid entry since 2026-09-08).
 # Evidence: backtest/dan_rules_study.py + dan_rules_pricing.py — reversal after
 # k>=3 same-direction 15m candles hits 52-56% while the market charges ~51c.
 # backtest/eva_streak_bt.py: the 35c resting-limit entry was adverse selection
 # (only fills when the streak keeps running) — mid entry keeps every signal.
+# Live epoch (2026-09-08 flip): entries <45c went 0/7 (−$1.83) — cheap mid on
+# the reversal side means the streak is still priced to continue. Entries >65c
+# are already-won tickets. Band 45–65 was the only profitable slice.
 EVA_STREAK_MIN_RUN = 3  # consecutive same-direction 15m candles required
 EVA_STREAK_MAX_LOOKBACK = 8  # candles inspected for the run (fetch bound)
 EVA_STREAK_REQUIRE_SWEEP = True  # last run candle must take the prior extreme
-EVA_STREAK_MIN_SIDE_MID = 20.0  # side already a longshot -> trend, not a wick
+EVA_STREAK_MIN_SIDE_MID = 45.0  # below this the market still prices continuation
+EVA_STREAK_MAX_SIDE_MID = 65.0  # above this the reversal is already priced in
 EVA_STREAK_TP_MULTIPLE = 2.0  # cash the reversal when the side doubles
 EVA_STREAK_SL_FRACTION = 0.5  # cut when the side halves — "never fully lose"
 EVA_STREAK_COOLDOWN_LOSSES = 2  # this many consecutive SL cuts ...

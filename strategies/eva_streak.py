@@ -191,15 +191,26 @@ class EvaStreakStrategy:
                 d,
             )
 
-        # 4) Reversal side taken at the mid.
+        # 4) Reversal side taken at the mid — only when the market hasn't
+        # already decided (too cheap = continuation priced in; too rich =
+        # reversal already priced in).
         side = "YES" if d == -1 else "NO"
         side_mid = kalshi_triggers.side_mid_cents(side, float(mid))
         if side_mid < float(bot_config.EVA_STREAK_MIN_SIDE_MID):
             return self._skip_near(
                 ctx,
-                f"eva_streak: {side} already {side_mid:.0f}¢ — a longshot here "
-                "means trend continuation, not a wick",
+                f"eva_streak: {side} at {side_mid:.0f}¢ — market still prices "
+                "continuation; cheap reversal mids have been 0-for-N live",
                 ["streak_too_cheap"],
+                run,
+                d,
+            )
+        if side_mid > float(bot_config.EVA_STREAK_MAX_SIDE_MID):
+            return self._skip_near(
+                ctx,
+                f"eva_streak: {side} at {side_mid:.0f}¢ — reversal already "
+                "priced in, no edge left at the mid",
+                ["streak_too_rich"],
                 run,
                 d,
             )

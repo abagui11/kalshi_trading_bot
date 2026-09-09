@@ -169,12 +169,20 @@ class EvaStreakDecideTests(unittest.TestCase):
         self.assertIn("streak_no_sweep", sug.skip_codes)
 
     def test_skips_when_reversal_side_too_cheap(self) -> None:
-        # 3 down candles -> buy YES, but YES mid is only 15c (longshot).
+        # 3 down candles -> buy YES, but YES mid is only 15c (continuation priced).
         ctx = _ctx(yes_mid_cents=15.0)
         sug = self._decide(ctx, _down_run_candles(3, swept=True))
         assert sug is not None
         self.assertEqual(sug.side, "SKIP")
         self.assertIn("streak_too_cheap", sug.skip_codes)
+
+    def test_skips_when_reversal_side_too_rich(self) -> None:
+        # YES mid 75 > MAX_SIDE_MID 65 — reversal already priced in.
+        ctx = _ctx(yes_mid_cents=75.0)
+        sug = self._decide(ctx, _down_run_candles(3, swept=True))
+        assert sug is not None
+        self.assertEqual(sug.side, "SKIP")
+        self.assertIn("streak_too_rich", sug.skip_codes)
 
     def test_no_entry_on_short_run(self) -> None:
         self.assertIsNone(self._decide(_ctx(), _down_run_candles(2, swept=True)))

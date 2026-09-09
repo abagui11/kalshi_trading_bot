@@ -177,17 +177,36 @@ class DoubleDownTests(unittest.TestCase):
             htf_bias="bull",
             meta={"eva_wick_done": 1},
         )
-        self.assertTrue(self._dd(_ctx(yes_mid=11.0)))
-        pos = paper.get_open_positions(bot_id="eva_wick")[0]
-        self.assertEqual(int(pos["contracts"]), 2)
-        self.assertAlmostEqual(float(pos["entry_cents"]), 21.0)
-        # Recovery to 29 -> trim the add, original rides.
-        self.assertTrue(self._dd(_ctx(yes_mid=29.0)))
-        pos = paper.get_open_positions(bot_id="eva_wick")[0]
-        self.assertEqual(int(pos["contracts"]), 1)
-        # No second round trip this window.
-        self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
+        with patch.object(bot_config, "EVA_WICK_DD_ENABLED", True):
+            self.assertTrue(self._dd(_ctx(yes_mid=11.0)))
+            pos = paper.get_open_positions(bot_id="eva_wick")[0]
+            self.assertEqual(int(pos["contracts"]), 2)
+            self.assertAlmostEqual(float(pos["entry_cents"]), 21.0)
+            # Recovery to 29 -> trim the add, original rides.
+            self.assertTrue(self._dd(_ctx(yes_mid=29.0)))
+            pos = paper.get_open_positions(bot_id="eva_wick")[0]
+            self.assertEqual(int(pos["contracts"]), 1)
+            # No second round trip this window.
+            self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
         _ = opened
+
+    def test_dd_disabled_by_default(self) -> None:
+        _open_wick_pos(entry=31.0, contracts=1)
+        paper.set_window_arm(
+            bot_id="eva_wick",
+            market_ticker="KXBTC15M-X",
+            armed_side="YES",
+            arm_yes_mid=31.0,
+            arm_side_mid=31.0,
+            arm_spot=100.0,
+            arm_strike=100.0,
+            ict_bias="bull",
+            htf_bias="bull",
+            meta={"eva_wick_done": 1},
+        )
+        self.assertFalse(bot_config.EVA_WICK_DD_ENABLED)
+        self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
+        self.assertEqual(int(paper.get_open_positions(bot_id="eva_wick")[0]["contracts"]), 1)
 
     def test_no_add_outside_entry_band(self) -> None:
         _open_wick_pos(entry=20.0, contracts=1)  # below the 29-33 band
@@ -203,13 +222,15 @@ class DoubleDownTests(unittest.TestCase):
             htf_bias="bull",
             meta={"eva_wick_done": 1},
         )
-        self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
+        with patch.object(bot_config, "EVA_WICK_DD_ENABLED", True):
+            self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
 
     def test_never_runs_when_bot_is_live(self) -> None:
         _open_wick_pos(entry=31.0, contracts=1)
-        with patch.object(config, "KALSHI_PAPER_ONLY", False):
-            with patch.object(config, "KALSHI_LIVE_BOTS", ()):
-                self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
+        with patch.object(bot_config, "EVA_WICK_DD_ENABLED", True):
+            with patch.object(config, "KALSHI_PAPER_ONLY", False):
+                with patch.object(config, "KALSHI_LIVE_BOTS", ()):
+                    self.assertFalse(self._dd(_ctx(yes_mid=11.0)))
 
     def test_tp_target_anchors_to_original_entry_after_dd(self) -> None:
         opened = _open_wick_pos(entry=31.0, contracts=1)
@@ -225,11 +246,12 @@ class DoubleDownTests(unittest.TestCase):
             htf_bias="bull",
             meta={"eva_wick_done": 1},
         )
-        self.assertTrue(self._dd(_ctx(yes_mid=11.0)))  # avg now 21
-        # 2x the blended 21 = 42, but TP must wait for 2x the original 31 = 62.
-        with patch("notify.broadcast_plain_text"):
-            self.assertFalse(self.strat._maybe_take_profit(_ctx(yes_mid=45.0)))
-            self.assertTrue(self.strat._maybe_take_profit(_ctx(yes_mid=62.0)))
+        with patch.object(bot_config, "EVA_WICK_DD_ENABLED", True):
+            self.assertTrue(self._dd(_ctx(yes_mid=11.0)))  # avg now 21
+            # 2x the blended 21 = 42, but TP must wait for 2x the original 31 = 62.
+            with patch("notify.broadcast_plain_text"):
+                self.assertFalse(self.strat._maybe_take_profit(_ctx(yes_mid=45.0)))
+                self.assertTrue(self.strat._maybe_take_profit(_ctx(yes_mid=62.0)))
         _ = opened
 
 
