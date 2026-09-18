@@ -220,6 +220,19 @@ def broadcast_decision(
 
     asyncio.run(_run())
 
+    # Mirror trade cards to EVA-product subscribers of this lane's strategy
+    # (kalshi_reversal / kalshi_wick). Best-effort by design: the relay must
+    # never break this bot's own broadcast or trading loop.
+    try:
+        import eva_relay
+
+        eva_relay.relay_decision(
+            suggestion, chart_path=chart_path or structure_chart_path,
+            opened=opened,
+        )
+    except Exception:
+        logger.exception("EVA relay failed")
+
 
 def broadcast_kalshi_trade(
     suggestion: KalshiSuggestion,
