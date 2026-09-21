@@ -69,15 +69,39 @@ def _subscribers(strategy: str) -> list[int]:
 
 
 def _keyboard(strategy: str, ref: str) -> str:
-    # Callback data caps at 64 bytes; the ref is display context, not a lookup
-    # key, so truncation is safe.
-    ref = ref[: 64 - len(f"kalshi:accept:{strategy}:")]
+    # Feed-only for now — Accepting into Kalshi is coming later.
     return json.dumps({
         "inline_keyboard": [[
-            {"text": "Accept", "callback_data": f"kalshi:accept:{strategy}:{ref}"},
-            {"text": "Reject", "callback_data": f"kalshi:reject:{strategy}:{ref}"},
+            {
+                "text": "Accepting soon",
+                "callback_data": f"kalshi:soon:{strategy}:{ref[:20]}",
+            },
         ]]
     })
+
+
+def _settles_in_minutes(expiry_ts: str | None) -> int | None:
+    """Minutes until the quarter-hour settlement, if we can parse expiry_ts."""
+    if not expiry_ts:
+        return None
+    from datetime import datetime, timezone
+    raw = str(expiry_ts).strip()
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            when = datetime.strptime(raw.replace("+00:00", "Z"), fmt)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            delta = (when - datetime.now(timezone.utc)).total_seconds()
+            if delta <= 0:
+                return 0
+            return max(1, int(round(delta / 60.0)))
+        except ValueError:
+            continue
+    return None
 
 
 def _card_text(suggestion: KalshiSuggestion, label: str, *, opened: bool) -> str:
@@ -86,22 +110,28 @@ def _card_text(suggestion: KalshiSuggestion, label: str, *, opened: bool) -> str
         f"{suggestion.entry_cents:.0f}¢"
         if suggestion.entry_cents is not None else "n/a"
     )
+    mins = _settles_in_minutes(suggestion.expiry_ts)
+    if mins is None:
+        expiry_line = "Settles within the 15-minute window"
+    elif mins <= 0:
+        expiry_line = "Settling now"
+    else:
+        expiry_line = f"Settles in ~{mins} min"
     header = f"{label} · {'LIVE FILL' if opened else 'TRADE SIGNAL'}"
     lines = [
         header,
+        expiry_line,
         "",
         f"{suggestion.product_id} — {suggestion.side} x{suggestion.contracts} "
         f"@ {entry}",
         f"Market: {suggestion.market_ticker or 'n/a'}",
-        f"Window closes: {suggestion.expiry_ts or '?'}",
     ]
     rationale = (suggestion.rationale or "").strip()
     if rationale:
         lines += ["", rationale[:500]]
     lines += [
         "",
-        "Settles within the 15-minute window. Capital deployment to Kalshi "
-        "is coming soon — this card is the strategy's live idea stream.",
+        "Idea feed only — accepting into Kalshi with real capital is coming soon.",
     ]
     return "\n".join(lines)[:4096]
 
