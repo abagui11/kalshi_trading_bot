@@ -17,6 +17,16 @@ Evidence, from the recorded books (trade_ideas/analysis/_q0921_kalshi_*.py):
   decision, threshold chosen from the forward shadow log, never from the
   weekend that motivated it.
 
+* Daily loss stop (2026-09-22, live books only): once a live bot's realized
+  P&L for the UTC day is <= -KALSHI_DAILY_STOP_PCT x the day's sizing
+  bankroll (25% ~ $50 on a $204 shard), it opens nothing until 00:00Z.
+  Insurance, not edge: replaying eva_wick's 723 trades, every stop level
+  from $10 to $100 was noise or a cost (tight stops skip the same-day
+  recovery), and on weekdays nothing at 15%+ ever fired (worst weekday
+  intraday -$27). 25% was chosen because it has never bound on the record,
+  so it bounds a tail the record has not shown without taxing the edge.
+  Paper books are exempt so the experiments stay unfiltered.
+
 Every gate fails open: a broken clock or a failed query must never stop the
 book silently — gating is a risk reduction, not a dependency.
 """
@@ -24,6 +34,7 @@ book silently — gating is a risk reduction, not a dependency.
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -42,6 +53,59 @@ STREAK_COOLDOWN_N: int = int(getattr(bot_config, "EVA_STREAK_LOSS_COOLDOWN_N", 3
 STREAK_COOLDOWN_MIN: int = int(
     getattr(bot_config, "EVA_STREAK_LOSS_COOLDOWN_MIN", 240)
 )
+DAILY_STOP_PCT: float = float(
+    os.getenv("KALSHI_DAILY_STOP_PCT")
+    or getattr(bot_config, "KALSHI_DAILY_STOP_PCT", 0.25)
+)
+
+_day_bankroll: dict[str, float] = {}
+
+
+def _bankroll_for_day(day: str) -> float:
+    """Sizing bankroll snapshotted at the first check of the UTC day.
+
+    The shard balance excludes the cost of open positions, so re-reading it
+    mid-day would shrink the stop exactly while exposure is on.
+    """
+    if day not in _day_bankroll:
+        import kalshi_sizing
+
+        _day_bankroll.clear()
+        _day_bankroll[day] = float(kalshi_sizing.sizing_bankroll_usd())
+    return _day_bankroll[day]
+
+
+def daily_loss_stop(bot_id: str, now: datetime | None = None) -> str | None:
+    """Stop reason for a live bot that has lost its daily limit, else None."""
+    try:
+        if DAILY_STOP_PCT <= 0 or not bot_config.bot_is_live(bot_id):
+            return None
+        now = now or datetime.now(timezone.utc)
+        day = now.astimezone(timezone.utc).strftime("%Y-%m-%d")
+        with paper._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(pnl_usd), 0) FROM paper_positions
+                WHERE bot_id = ? AND pnl_usd IS NOT NULL
+                  AND closed_at >= ?
+                """,
+                (bot_id, f"{day}T00:00:00"),
+            ).fetchone()
+        realized = float(row[0] or 0.0)
+        if realized >= 0:
+            return None
+        bankroll = _bankroll_for_day(day)
+        limit = DAILY_STOP_PCT * bankroll
+        if bankroll > 0 and realized <= -limit:
+            return (
+                f"daily_loss_stop: {bot_id} realized ${realized:.2f} today, "
+                f"limit -${limit:.2f} ({DAILY_STOP_PCT:.0%} of ${bankroll:.2f}); "
+                "no entries until 00:00Z"
+            )
+        return None
+    except Exception:
+        logger.exception("daily_loss_stop failed — failing open")
+        return None
 
 
 def weekend_pause(bot_id: str, now: datetime | None = None) -> bool:
@@ -145,6 +209,9 @@ def entry_gate(
     """
     if weekend_pause(bot_id, now=now):
         return "weekend_pause", {"chop": None}
+    reason = daily_loss_stop(bot_id, now=now)
+    if reason:
+        return reason, {"chop": None}
     if bot_id == "eva_streak":
         reason = streak_loss_cooldown(product_id, now=now)
         if reason:
