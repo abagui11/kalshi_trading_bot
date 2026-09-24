@@ -16,9 +16,12 @@ MON = datetime(2026, 9, 21, 14, 0, tzinfo=timezone.utc)
 
 
 class TestWeekendPause(unittest.TestCase):
-    def test_directional_books_pause_on_saturday(self) -> None:
+    def test_streak_pauses_on_saturday(self) -> None:
         self.assertTrue(kalshi_regime.weekend_pause("eva_streak", now=SAT))
-        self.assertTrue(kalshi_regime.weekend_pause("eva_wick", now=SAT))
+
+    def test_wick_left_the_blanket_pause_for_the_watch(self) -> None:
+        """2026-09-24: wick weekends are governed by wick_weekend_watch."""
+        self.assertFalse(kalshi_regime.weekend_pause("eva_wick", now=SAT))
 
     def test_weekday_trades(self) -> None:
         self.assertFalse(kalshi_regime.weekend_pause("eva_streak", now=MON))
@@ -205,18 +208,33 @@ class TestDailyLossStop(unittest.TestCase):
 
 
 class TestEntryGate(unittest.TestCase):
-    def test_wick_gets_weekend_but_never_cooldown(self) -> None:
+    def test_wick_gets_the_watch_but_never_cooldown(self) -> None:
         with mock.patch.object(kalshi_regime, "chop_shadow",
                                return_value={"chop": 3.0}), \
                 mock.patch.object(kalshi_regime, "daily_loss_stop",
                                   return_value=None), \
+                mock.patch.object(kalshi_regime, "wick_weekend_watch",
+                                  return_value=None) as ww, \
                 mock.patch.object(kalshi_regime, "streak_loss_cooldown") as cd:
             reason, shadow = kalshi_regime.entry_gate("eva_wick", "BTC-USD",
                                                       now=SAT)
-            self.assertEqual(reason, "weekend_pause")
+            self.assertIsNone(reason)   # weekend now trades until the watch trips
             reason, _ = kalshi_regime.entry_gate("eva_wick", "BTC-USD", now=MON)
             self.assertIsNone(reason)
+        self.assertEqual(ww.call_count, 2)
         cd.assert_not_called()   # the sweep says a wick cooldown costs money
+
+    def test_tripped_watch_blocks_the_wick_entry(self) -> None:
+        with mock.patch.object(kalshi_regime, "daily_loss_stop",
+                                  return_value=None), \
+                mock.patch.object(kalshi_regime, "wick_weekend_watch",
+                                  return_value="weekend_watch: tripped"):
+            reason, _ = kalshi_regime.entry_gate("eva_wick", "BTC-USD", now=SAT)
+        self.assertIn("weekend_watch", reason)
+
+    def test_streak_still_blanket_paused_on_saturday(self) -> None:
+        reason, _ = kalshi_regime.entry_gate("eva_streak", "BTC-USD", now=SAT)
+        self.assertEqual(reason, "weekend_pause")
 
     def test_chop_is_shadow_only(self) -> None:
         """An extreme chop reading must not gate anything by itself."""
@@ -230,6 +248,97 @@ class TestEntryGate(unittest.TestCase):
                                                       now=MON)
         self.assertIsNone(reason)
         self.assertEqual(shadow["chop"], 99.0)
+
+
+class TestWickWeekendWatch(unittest.TestCase):
+    """Baseline: 250 weekday trades, mean ~+$0.36. SAT is Sat 2026-09-19."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        paper.set_db_path(Path(self._tmp.name) / "kalshi.db")
+        paper.init_db()
+        self._seq = 0
+        # weekday baseline: mid-week days after the 09-17 epoch
+        for i in range(250):
+            pnl = 2.0 if i % 4 else -4.56   # mean ≈ +0.36, sd ≈ 2.8
+            # Thu 09-17 / Fri 09-18: weekdays inside the baseline epoch
+            self._settle(pnl, datetime(2026, 9, 17 + (i % 2), 6 + (i % 12),
+                                       (i * 7) % 60, tzinfo=timezone.utc))
+
+    def tearDown(self) -> None:
+        paper.set_db_path(None)
+        try:
+            self._tmp.cleanup()
+        except PermissionError:
+            pass
+
+    def _settle(self, pnl: float, t: datetime) -> None:
+        self._seq += 1
+        with paper._connect() as conn:
+            conn.execute(
+                "INSERT INTO paper_positions (bot_id, opened_at, series, "
+                "market_ticker, product_id, side, contracts, entry_cents, "
+                "expiry_ts, rationale, status, pnl_usd, closed_at) "
+                "VALUES ('eva_wick', ?, 'KXBTC15M', ?, 'BTC-USD', 'YES', 8, 73, "
+                "?, '', 'settled', ?, ?)",
+                (t.isoformat().replace("+00:00", "Z"), f"W-{self._seq}",
+                 t.isoformat(), pnl,
+                 t.isoformat().replace("+00:00", "Z")),
+            )
+            conn.commit()
+
+    def _weekend_losses(self, n: int, pnl: float = -6.4) -> None:
+        for i in range(n):
+            self._settle(pnl, datetime(2026, 9, 19, 1 + i // 30, (i * 2) % 60,
+                                       tzinfo=timezone.utc))
+
+    def test_inactive_on_weekdays(self) -> None:
+        self._weekend_losses(60)
+        self.assertIsNone(kalshi_regime.wick_weekend_watch(now=MON))
+
+    def test_below_min_n_never_trips(self) -> None:
+        self._weekend_losses(kalshi_regime.WICK_WW_MIN_N - 1)
+        self.assertIsNone(kalshi_regime.wick_weekend_watch(now=SAT))
+
+    def test_weekday_like_weekend_does_not_trip(self) -> None:
+        for i in range(40):
+            self._settle(2.0 if i % 4 else -4.56,
+                         datetime(2026, 9, 19, 2 + i // 30, (i * 3) % 60,
+                                  tzinfo=timezone.utc))
+        self.assertIsNone(kalshi_regime.wick_weekend_watch(now=SAT))
+
+    def test_statistical_bleed_trips_and_persists(self) -> None:
+        self._weekend_losses(30)   # 30 straight -$6.4 is far beyond chance
+        reason = kalshi_regime.wick_weekend_watch(now=SAT)
+        self.assertIsNotNone(reason)
+        self.assertIn("weekend_watch", reason)
+        # persisted: recompute is skipped, later calls stay tripped
+        again = kalshi_regime.wick_weekend_watch(
+            now=SAT + timedelta(hours=5))
+        self.assertIn("tripped", again)
+        sunday = SAT + timedelta(days=1)
+        self.assertIn("tripped", kalshi_regime.wick_weekend_watch(now=sunday))
+
+    def test_trip_expires_on_monday(self) -> None:
+        self._weekend_losses(30)
+        self.assertIsNotNone(kalshi_regime.wick_weekend_watch(now=SAT))
+        self.assertIsNone(kalshi_regime.wick_weekend_watch(now=MON))
+
+    def test_next_weekend_starts_clean(self) -> None:
+        self._weekend_losses(30)
+        self.assertIsNotNone(kalshi_regime.wick_weekend_watch(now=SAT))
+        next_sat = SAT + timedelta(days=7)
+        self.assertIsNone(kalshi_regime.wick_weekend_watch(now=next_sat))
+
+    def test_thin_baseline_fails_open(self) -> None:
+        with mock.patch.object(kalshi_regime, "WICK_WW_MIN_BASELINE", 10_000):
+            self._weekend_losses(60)
+            self.assertIsNone(kalshi_regime.wick_weekend_watch(now=SAT))
+
+    def test_query_failure_fails_open(self) -> None:
+        with mock.patch.object(paper, "_connect",
+                               side_effect=RuntimeError("locked")):
+            self.assertIsNone(kalshi_regime.wick_weekend_watch(now=SAT))
 
 
 if __name__ == "__main__":

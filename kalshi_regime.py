@@ -27,6 +27,28 @@ Evidence, from the recorded books (trade_ideas/analysis/_q0921_kalshi_*.py):
   so it bounds a tail the record has not shown without taxing the edge.
   Paper books are exempt so the experiments stay unfiltered.
 
+* Weekend watch, eva_wick (2026-09-24, operator decision): the blanket
+  weekend pause is replaced for THIS BOT ONLY by a statistical tripwire, so
+  the book can collect weekend evidence instead of never having any. The
+  wick's weekend record is ONE weekend (09-19/20, n=289, -$0.226/trade,
+  recorded before any gate) against a weekday baseline of ~590 trades at
+  +$0.359 — far too little to call the regime effect proven, which is the
+  point of trading it with a breaker instead of assuming either way.
+  Sequentially, at each settled weekend trade k >= WICK_WW_MIN_N:
+      p_k = Phi( (S_k - k*mu_weekday) / (sd_weekday * sqrt(k)) )
+  and the bot stops opening until Monday 00:00Z when p_k < WICK_WW_ALPHA.
+  Calibration (trade_ideas/analysis/scripts/_q0924_weekend_watch_cal.py,
+  4000 sims/cell, sweep alpha x min_n, all cells monotone): the shipped cell
+  (0.01, 20) false-trips a weekday-like weekend 9.7% of the time (median
+  false trip at -$38), trips a weekend that behaves like the recorded one
+  85.5% of the time (median trade 84, -$40), and replayed on the actual
+  recorded weekend trips at trade 65 (-$32), saving the remaining -$33.
+  NOTE: alpha is the per-check p-value, NOT the weekend false-trip rate —
+  checking after every settle inflates it; ~10% per weekend is the measured
+  number. The trip is persisted (regime_state), so a restart cannot untrip.
+  eva_streak stays on the blanket pause: its weekend record is losing AND
+  its cooldown sweep already says pausing it after losses helps.
+
 Every gate fails open: a broken clock or a failed query must never stop the
 book silently — gating is a risk reduction, not a dependency.
 """
@@ -46,9 +68,17 @@ logger = logging.getLogger(__name__)
 
 # Defaults live here (not bot_config) so this module lands without touching
 # files that carry unrelated uncommitted work; bot_config can override.
+# 2026-09-24: eva_wick left the blanket pause for the statistical weekend
+# watch below; eva_streak stays hard-paused.
 WEEKEND_PAUSE_BOTS: tuple[str, ...] = tuple(
-    getattr(bot_config, "KALSHI_WEEKEND_PAUSE_BOTS", ("eva_streak", "eva_wick"))
+    getattr(bot_config, "KALSHI_WEEKEND_PAUSE_BOTS", ("eva_streak",))
 )
+WICK_WW_ALPHA: float = float(
+    getattr(bot_config, "EVA_WICK_WEEKEND_WATCH_ALPHA", 0.01)
+)
+WICK_WW_MIN_N: int = int(getattr(bot_config, "EVA_WICK_WEEKEND_WATCH_MIN_N", 20))
+WICK_WW_EPOCH = "2026-09-17"          # wick redefinition; baseline starts here
+WICK_WW_MIN_BASELINE = 200            # fewer weekday closes than this -> fail open
 STREAK_COOLDOWN_N: int = int(getattr(bot_config, "EVA_STREAK_LOSS_COOLDOWN_N", 3))
 STREAK_COOLDOWN_MIN: int = int(
     getattr(bot_config, "EVA_STREAK_LOSS_COOLDOWN_MIN", 240)
@@ -166,6 +196,105 @@ def streak_loss_cooldown(
         return None
 
 
+def _state_get(key: str) -> str | None:
+    with paper._connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS regime_state "
+            "(key TEXT PRIMARY KEY, value TEXT)"
+        )
+        row = conn.execute(
+            "SELECT value FROM regime_state WHERE key = ?", (key,)
+        ).fetchone()
+    return str(row[0]) if row else None
+
+
+def _state_set(key: str, value: str) -> None:
+    with paper._connect() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS regime_state "
+            "(key TEXT PRIMARY KEY, value TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO regime_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()
+
+
+def _norm_cdf(z: float) -> float:
+    from math import erf, sqrt
+
+    return 0.5 * (1 + erf(z / sqrt(2)))
+
+
+def wick_weekend_watch(now: datetime | None = None) -> str | None:
+    """Weekend tripwire for eva_wick. Reason to stand down, or None to trade.
+
+    Active Sat/Sun UTC only. Trips when the weekend's running P&L is lower
+    than random draws from the bot's own weekday distribution can plausibly
+    explain (see module docstring for the calibration), then holds until
+    Monday 00:00Z. The trip is persisted so a process restart cannot untrip.
+    """
+    try:
+        now = now or datetime.now(timezone.utc)
+        if now.weekday() < 5:
+            return None
+        saturday = (now - timedelta(days=now.weekday() - 5)).strftime("%Y-%m-%d")
+        trip_key = f"wick_weekend_trip:{saturday}"
+        tripped = _state_get(trip_key)
+        if tripped:
+            return (
+                f"weekend_watch: tripped {tripped} — no entries until Monday 00:00Z"
+            )
+
+        with paper._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT opened_at, pnl_usd FROM paper_positions
+                WHERE bot_id = 'eva_wick' AND opened_at >= ?
+                  AND pnl_usd IS NOT NULL AND closed_at IS NOT NULL
+                """,
+                (WICK_WW_EPOCH,),
+            ).fetchall()
+
+        def _wd(s: Any) -> int:
+            ts = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+            return ts.weekday() if ts.tzinfo else ts.replace(
+                tzinfo=timezone.utc).weekday()
+
+        baseline = [float(p) for o, p in rows if _wd(o) < 5]
+        weekend = [
+            float(p) for o, p in rows
+            if _wd(o) >= 5 and str(o) >= saturday
+        ]
+        k = len(weekend)
+        if k < WICK_WW_MIN_N or len(baseline) < WICK_WW_MIN_BASELINE:
+            return None
+        n = len(baseline)
+        mu = sum(baseline) / n
+        var = sum((x - mu) ** 2 for x in baseline) / (n - 1)
+        sd = var ** 0.5
+        if sd <= 0:
+            return None
+        s = sum(weekend)
+        p = _norm_cdf((s - k * mu) / (sd * k ** 0.5))
+        if p < WICK_WW_ALPHA:
+            stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            _state_set(trip_key, stamp)
+            reason = (
+                f"weekend_watch: {k} weekend trades at ${s:+.2f}, "
+                f"p={p:.4f} < {WICK_WW_ALPHA} vs weekday baseline "
+                f"(mu={mu:+.3f}, n={n}) — no entries until Monday 00:00Z"
+            )
+            logger.warning("eva_wick %s", reason)
+            return reason
+        return None
+    except Exception:
+        logger.exception("wick_weekend_watch failed — failing open")
+        return None
+
+
 def chop_shadow(product_id: str) -> dict[str, Any]:
     """Trailing-24h chop measurement, for LOGGING ONLY. Never gates.
 
@@ -212,6 +341,10 @@ def entry_gate(
     reason = daily_loss_stop(bot_id, now=now)
     if reason:
         return reason, {"chop": None}
+    if bot_id == "eva_wick":
+        reason = wick_weekend_watch(now=now)
+        if reason:
+            return reason, {"chop": None}
     if bot_id == "eva_streak":
         reason = streak_loss_cooldown(product_id, now=now)
         if reason:
