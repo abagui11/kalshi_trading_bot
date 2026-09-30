@@ -84,11 +84,16 @@ def _bot_ids() -> tuple[str, ...]:
     return (DEFAULT_BOT_ID,)
 
 
-def _starting_usd() -> float:
+def _starting_usd(bot_id: str | None = None) -> float:
+    """Seed cash for a book — per-book, because they are not all the same.
+
+    The shadow books carry their own seed (bot_config.book_seed_usd), which
+    is a ledger figure only: sizing still comes from KALSHI_BANKROLL_USD.
+    """
     try:
         import bot_config
 
-        return float(bot_config.KALSHI_BANKROLL_USD)
+        return float(bot_config.book_seed_usd(bot_id))
     except Exception:
         return float(config.PAPER_PORTFOLIO_VALUE)
 
@@ -362,7 +367,7 @@ def _ensure_bot_state(conn: sqlite3.Connection, bot_id: str) -> None:
         "SELECT bot_id FROM paper_state WHERE bot_id = ?", (bot_id,)
     ).fetchone()
     if row is None:
-        start = _starting_usd()
+        start = _starting_usd(bot_id)
         conn.execute(
             """
             INSERT INTO paper_state (bot_id, starting_usd, cash_usd, realized_pnl_usd, updated_at)
@@ -413,7 +418,6 @@ def reset_book(
     *,
     bot_id: str | None = None,
 ) -> None:
-    start = float(starting_usd if starting_usd is not None else _starting_usd())
     bots = (bot_id,) if bot_id else _bot_ids()
     with _connect() as conn:
         if bot_id:
@@ -429,6 +433,11 @@ def reset_book(
             conn.execute("DELETE FROM bot_window_state")
             conn.execute("DELETE FROM paper_state")
         for bid in bots:
+            # Per book: an explicit starting_usd wins, otherwise each book
+            # gets its own seed rather than one shared figure.
+            start = float(
+                starting_usd if starting_usd is not None else _starting_usd(bid)
+            )
             conn.execute(
                 """
                 INSERT INTO paper_state (bot_id, starting_usd, cash_usd, realized_pnl_usd, updated_at)
@@ -487,7 +496,7 @@ def sync_live_cash(
             row = conn.execute(
                 "SELECT starting_usd FROM paper_state WHERE bot_id = ?", (bid,)
             ).fetchone()
-            start = float(row["starting_usd"]) if row else _starting_usd()
+            start = float(row["starting_usd"]) if row else _starting_usd(bid)
         start = float(start)
         conn.execute(
             """
@@ -1281,7 +1290,7 @@ def get_stats(*, bot_id: str | None = None) -> dict[str, Any]:
             (bid,),
         ).fetchall()
 
-    starting = float(state["starting_usd"]) if state else _starting_usd()
+    starting = float(state["starting_usd"]) if state else _starting_usd(bid)
     cash = float(state["cash_usd"]) if state else starting
     realized = float(state["realized_pnl_usd"]) if state else 0.0
     open_cost = sum(

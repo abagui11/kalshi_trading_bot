@@ -62,6 +62,31 @@ CROSS_WICK_BOTS: tuple[str, ...] = (
 # of the rule under test rather than tuned on these books' results.
 EVA_CROSS_MIN_CONF = 0.55
 
+# Ledger seed for the wick-derivative shadow books (operator call
+# 2026-09-30: $1,000 each instead of the $225 the rest of the ledger uses).
+#
+# Deliberately NOT expressed by moving KALSHI_BANKROLL_USD: that value is
+# the *sizing* bankroll and is shared with the live book, so raising it
+# would size up real orders on the Kalshi account. This only says how much
+# cash these books' ledgers start with — per-trade size stays exactly where
+# the wick family has it, which is what keeps the rows comparable.
+SHADOW_BOOK_SEED_USD = 1000.0
+SHADOW_SEED_BOTS: frozenset[str] = frozenset(HOURLY_WICK_BOTS) | frozenset(
+    CROSS_WICK_BOTS
+)
+
+
+def book_seed_usd(bot_id: str | None = None) -> float:
+    """Starting ledger cash for a paper book.
+
+    Read wherever a book row is created or reset, so a later
+    ``reset_book`` on one of these ids cannot silently drop it back to the
+    $225 baseline and quietly restate its percent-of-seed column.
+    """
+    if str(bot_id or "") in SHADOW_SEED_BOTS:
+        return float(SHADOW_BOOK_SEED_USD)
+    return float(KALSHI_BANKROLL_USD)
+
 # Bots that may never send a real order, whatever the env says. This is a
 # code-level guard rather than an env one because KALSHI_LIVE_BOTS is a
 # whitelist that an operator edits under time pressure.
