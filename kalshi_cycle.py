@@ -24,7 +24,11 @@ import research
 from models import KalshiSuggestion
 from patterns import market_structure_state as mss
 from strategies.context import SharedCycleContext, SharedHtfBias
-from strategies.registry import any_needs_htf_bias, enabled_strategies
+from strategies.registry import (
+    any_needs_htf_bias,
+    enabled_strategies,
+    handles_series,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +93,8 @@ def settle_due() -> list[dict[str, Any]]:
             except Exception:
                 logger.exception("Result archive record failed for %s", ticker)
             try:
-                notify.broadcast_settle(closed)
+                if bot_id not in bot_config.PAPER_ONLY_BOTS:
+                    notify.broadcast_settle(closed)
             except Exception:
                 logger.exception("Settle notify failed for %s", ticker)
             settled.append(closed)
@@ -722,6 +727,11 @@ def _notify_decision(
     market: dict[str, Any] | None = None,
     opened: bool = False,
 ) -> str | None:
+    if suggestion.bot_id in bot_config.PAPER_ONLY_BOTS:
+        # Shadow books are read off the dashboard. Routing them to the same
+        # Telegram channel as the live book would triple its traffic with
+        # trades nobody can act on, which is how a real alert gets missed.
+        return None
     if (
         bot_config.BROADCAST_ONLY_TRADES
         and not suggestion.is_trade()
@@ -821,13 +831,13 @@ def apply_and_log(
 
         entry = float(suggestion.entry_cents or 0)
         suggestion.contracts = kalshi_sizing.clamp_contracts(
-            int(suggestion.contracts or 0), entry
+            int(suggestion.contracts or 0), entry, bot_id=suggestion.bot_id
         )
         if suggestion.contracts < 1:
             suggestion = kalshi_finalize.make_skip(
                 rationale=(
                     f"signal was {suggestion.side} but size clamped to 0 "
-                    f"(max {bot_config.KALSHI_MAX_CONTRACTS} ct / "
+                    f"(max {bot_config.bot_max_contracts(suggestion.bot_id)} ct / "
                     f"${float(bot_config.KALSHI_MAX_NOTIONAL_USD):.2f} notional). "
                     f"Original why: {suggestion.rationale}"
                 ),
@@ -1073,7 +1083,12 @@ def run_strategy_cycle(
     results: list[KalshiSuggestion] = []
     yes_mids: dict[str, float] = {}
 
-    for series in config.KALSHI_SERIES:
+    for series in bot_config.active_series():
+        strategies = [
+            s for s in enabled_strategies() if handles_series(s, series)
+        ]
+        if not strategies:
+            continue
         try:
             markets = kalshi_client.get_open_markets(series)
         except Exception:
@@ -1100,17 +1115,25 @@ def run_strategy_cycle(
             continue
 
         market = markets[0]
-        ctx = build_shared_context(
-            series,
-            market,
-            near_decision=near_decision,
-            force_htf=force_htf,
-            allow_htf_refresh=allow_htf_refresh,
-        )
+        try:
+            ctx = build_shared_context(
+                series,
+                market,
+                near_decision=near_decision,
+                force_htf=force_htf,
+                allow_htf_refresh=allow_htf_refresh,
+            )
+        except Exception:
+            # Context assembly reaches out for spot and candles, so a single
+            # flaky product must not take the tick down with it. With the
+            # altcoin shadow books enabled there are five of these per tick
+            # and only two of them carry real money.
+            logger.exception("Failed to build context for %s — skipping", series)
+            continue
         if ctx.yes_mid_cents is not None:
             yes_mids[ctx.market_ticker] = float(ctx.yes_mid_cents)
 
-        for strat in enabled_strategies():
+        for strat in strategies:
             try:
                 suggestion = strat.decide(ctx)
             except Exception:

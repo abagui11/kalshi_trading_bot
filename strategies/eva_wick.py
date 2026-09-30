@@ -1,84 +1,59 @@
-"""EVA wick bot — fade pops / buy overshoots against EVA brain stances.
+"""EVA wick, redefined 2026-09-17 — buy the mid-window favourite.
 
-Zero-Claude strategy: direction comes from the hub's persisted H4/H1/M15
-stances (``eva_intel``); entries are rule-based wick logic reverse-engineered
-from the Sep 2 2026 manual session (see exports/wick_review_20260902).
+This sleeve replaces the fade strategy that used to carry this bot_id. The old
+one bought the cheap side (20-33c) on a wick-fade setup and lost 17.6 dollars
+over 87 trades. The reason it lost is the finding this rule is built on:
+buying *blind* in the 20-33c band, with no signal whatsoever, loses ~11 points
+against the price paid, and the old strategy lost 10.7. Its trigger, M15 gate
+and excursion thresholds added nothing measurable. The band was the whole
+result.
 
-Two entry patterns, both requiring the bought side to be cheap:
+The same search says the opposite band is mispriced the other way, but only in
+the middle of the window:
 
-* ``fade_pop`` — price pops to the top (bottom) of the trailing session range
-  against a bearish (bullish) EVA lean; buy the opposing side while the crowd
-  prices the pop as continuation.
-* ``buy_overshoot`` — a flush into a session-range edge with EVA's M15 stance
-  already flipped against the move (oversold-reversion); buy the bounce side.
+    12.5-15 min left   +2.7 pts  (t=0.3)  <- where the bot used to trade
+    4-10 min left     +13.0 pts  (t=3.5)  <- this rule
+    last 2 min         -4.9 pts  (t=-3.3) <- where eva_arb trades and loses
 
-Boss rules are soft gates (reduced size + journal tag) except the hard caps:
-entry above the soft price ceiling, or BTC trailing-hour move above the hard
-limit, always skip.
+So: with 4 to 10 minutes left, buy whichever side the book prices at 67-80c,
+one entry per window, held to settlement. Deliberately no directional signal,
+no EVA stance gate and no excursion filter — every one of those was tested and
+added nothing over the band and the clock, and the two stance gates we did ship
+both failed out of sample.
+
+Backtest over the epoch (151 entries, Sep 3-17, one per market, held to
+settle, Kalshi taker fee charged): 86.1% win at 73.3c, +$0.098/contract priced
+at mid+1c, t=3.48, 13 of 15 days profitable, worst drawdown $1.84/contract and
+never more than 2 losses in a row. It stays profitable even paying 6c through
+the mid, which is what makes it worth trading before we have recorded bid/ask
+for this part of the window: the edge is far larger than any plausible spread.
+
+Held to settlement on purpose. A stop would probably help - 86% win at 73c
+means the losses are the whole variance - but nothing about a stop here has
+been measured, and shipping unmeasured mechanics is how the last two filters
+got us. Hold-to-settle is exactly what the backtest scored.
+
+Like eva_arb, this builds its suggestion directly rather than going through
+kalshi_finalize, which hard-blocks anything above 55c.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 import bot_config
-import eva_intel
-import kalshi_finalize
 import kalshi_triggers
 import paper
-import research
 from models import KalshiSuggestion
 from strategies.context import SharedCycleContext
 
 logger = logging.getLogger(__name__)
 
-_DONE_META_KEY = "eva_wick_done"
-
-
-def _btc_1h_move_pct(ctx: SharedCycleContext) -> float | None:
-    """Net BTC % move over the trailing hour (boss rule 3 — always BTC)."""
-    if ctx.coinbase == "BTC-USD" and ctx.prior_1h_ret is not None:
-        return float(ctx.prior_1h_ret)
-    try:
-        m5 = research.get_ohlc("M5", limit=13, product_id="BTC-USD")
-    except Exception:
-        logger.exception("eva_wick: BTC M5 fetch failed")
-        return None
-    if len(m5) < 13:
-        return None
-    first = float(m5[-13]["close"])
-    last = float(m5[-1]["close"])
-    if first <= 0:
-        return None
-    return (last / first - 1.0) * 100.0
-
-
-def _session_range(product_id: str, spot: float) -> tuple[float | None, float | None]:
-    """(session_pos 0..1 over trailing ~6h, 24h range width %) from H1 bars."""
-    try:
-        h1 = research.get_ohlc("H1", limit=25, product_id=product_id)
-    except Exception:
-        logger.exception("eva_wick: H1 fetch failed for %s", product_id)
-        return None, None
-    if len(h1) < 7:
-        return None, None
-    recent = h1[-6:]
-    lo = min(float(b["low"]) for b in recent)
-    hi = max(float(b["high"]) for b in recent)
-    lo = min(lo, spot)
-    hi = max(hi, spot)
-    pos = (spot - lo) / (hi - lo) if hi > lo else 0.5
-    day = h1[-24:]
-    d_lo = min(float(b["low"]) for b in day)
-    d_hi = max(float(b["high"]) for b in day)
-    width_pct = (d_hi - d_lo) / spot * 100.0 if spot > 0 else None
-    return pos, width_pct
+_DONE_META_KEY = "eva_fav_done"
 
 
 def _arm_meta(arm: dict[str, Any]) -> dict[str, Any]:
-    """Parse the window-arm meta payload (stored as JSON in ``meta_json``)."""
     raw = arm.get("meta") if isinstance(arm.get("meta"), dict) else arm.get("meta_json")
     if isinstance(raw, dict):
         return raw
@@ -93,546 +68,191 @@ def _arm_meta(arm: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _window_quarter(expiry_ts: str | None) -> str:
-    """first15 | last15 | mid — from the Kalshi window's settle minute."""
-    if not expiry_ts:
-        return "mid"
-    try:
-        dt = datetime.fromisoformat(str(expiry_ts).replace("Z", "+00:00"))
-    except ValueError:
-        return "mid"
-    if dt.minute == 15:
-        return "first15"
-    if dt.minute == 0:
-        return "last15"
-    return "mid"
-
-
 class EvaWickStrategy:
     bot_id = "eva_wick"
-    display_name = "EVA wick (fade/overshoot)"
+    display_name = "EVA favourite (mid-window)"
     needs_htf_bias = False  # never triggers the Claude HTF refresh
 
-    # ---------------------------------------------------------------- decide
+    def size_for_fill(
+        self,
+        ctx: SharedCycleContext,
+        side: str,
+        entry_cents: float,
+        contracts: int,
+    ) -> tuple[int, float, dict[str, Any]]:
+        """The fill this book would really get: (contracts, price, context).
+
+        The live book does not need this — it sends a real order and reads the
+        count and average price back off the response, which is why its ledger
+        carries true fills. Paper clones of this rule override it to simulate
+        the same thing against the published ladder, so they cannot record a
+        fill against liquidity that was not there. Returning 0 contracts
+        abandons the entry without arming the window, leaving the setup live
+        for a later tick.
+        """
+        return contracts, entry_cents, {}
+
     def decide(self, ctx: SharedCycleContext) -> KalshiSuggestion | None:
-        base = ctx.with_bot(self.bot_id)
         mid = ctx.yes_mid_cents
         if mid is None:
             return None
-
-        # 1) Manage an open position first (runs every tick): boss double-down
-        #    rule, then take-profit.
-        if self._maybe_double_down(ctx):
+        minutes_left = kalshi_triggers.minutes_to_expiry(
+            ctx.expiry_ts, now=ctx.clock()
+        )
+        if minutes_left is None or minutes_left <= 0:
             return None
-        if self._maybe_take_profit(ctx):
+        seconds_left = float(minutes_left) * 60.0
+
+        # One entry per window, and never re-enter after an exit.
+        arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
+        meta = _arm_meta(arm) if arm else {}
+        if meta.get(_DONE_META_KEY):
             return None
         if paper.has_open_for_market(ctx.market_ticker, bot_id=self.bot_id):
             return None
 
-        # One entry per window (incl. after a TP exit).
-        arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
-        if arm and _arm_meta(arm).get(_DONE_META_KEY):
+        # The clock is half the rule. Outside this band the same trade is
+        # either fairly priced (early) or actively bad (last 2 minutes).
+        lo_sec = float(bot_config.EVA_FAV_MIN_SECONDS_LEFT)
+        hi_sec = float(bot_config.EVA_FAV_MAX_SECONDS_LEFT)
+        if not (lo_sec <= seconds_left <= hi_sec):
             return None
 
-        # Respect the last-3m settlement block quietly.
-        if kalshi_triggers.in_last_minutes(ctx.expiry_ts, now=ctx.clock()):
-            return None
+        # Favourite = whichever side the book has above 50c. No view of our
+        # own is applied; the mispricing is in the market's own pricing.
+        mid_f = float(mid)
+        side = "YES" if mid_f >= 50.0 else "NO"
+        side_now = kalshi_triggers.side_mid_cents(side, mid_f)
 
-        if ctx.spot is None or ctx.strike is None or ctx.spot_vs_strike_pct is None:
-            return None
-
-        # 2) EVA stances — fail closed.
-        now = ctx.now if isinstance(ctx.now, datetime) else None
-        stances = eva_intel.get_stances(ctx.coinbase, now=now)
-        if stances is None:
+        min_px = float(bot_config.EVA_FAV_MIN_ENTRY_CENTS)
+        max_px = float(bot_config.EVA_FAV_MAX_ENTRY_CENTS)
+        if not (min_px <= side_now <= max_px):
             if ctx.near_decision:
-                return kalshi_finalize.make_skip(
-                    rationale="eva_wick: EVA stances unavailable/stale — fail closed, no trade",
-                    base=base,
-                    skip_codes=["eva_stale"],
-                    setup_tags=["eva_wick"],
-                    trigger_type="eva_wick",
-                    trigger_name="no_bias",
+                logger.debug(
+                    "eva_wick: %s favourite at %.1fc outside %.0f-%.0f band",
+                    ctx.market_ticker, side_now, min_px, max_px,
                 )
             return None
 
-        h4, h1, m15 = stances["H4"], stances["H1"], stances["M15"]
-        size_factor = 1.0
-        tags: list[str] = ["eva_wick"]
+        # Regime gates (kalshi_regime.py): daily loss stop, plus the weekend
+        # watch that replaced this book's blanket weekend pause on 2026-09-24.
+        # Sits after the band check, so the chop shadow costs one OHLC call
+        # per would-be entry, not per tick. Deliberately NO loss cooldown on
+        # this book: the sweep says skipping after losses skips winners here
+        # (negative in 9 of 12 cells).
+        #
+        # Paper-only clones are exempt. The weekend watch is calibrated on the
+        # live book's own weekday distribution and the daily stop exempts
+        # paper by design, so applying either to a shadow book would censor
+        # the sample it exists to collect.
+        if self.bot_id not in bot_config.PAPER_ONLY_BOTS:
+            import kalshi_regime
 
-        # 3) BTC trailing-hour move gate (hard above HARD, soft above SOFT).
-        btc_move = _btc_1h_move_pct(ctx)
-        if btc_move is not None:
-            move = abs(btc_move)
-            if move > float(bot_config.EVA_WICK_BTC_MOVE_HARD_PCT):
-                if ctx.near_decision:
-                    return kalshi_finalize.make_skip(
-                        rationale=(
-                            f"eva_wick: BTC moved {btc_move:+.2f}% in the past hour "
-                            f"(hard limit {bot_config.EVA_WICK_BTC_MOVE_HARD_PCT}%) — "
-                            "expansion hour, wick fades untrustworthy"
-                        ),
-                        base=base,
-                        skip_codes=["eva_btc_move"],
-                        setup_tags=tags + ["btc_expansion"],
-                        trigger_type="eva_wick",
-                        trigger_name="btc_move_gate",
-                    )
-                return None
-            if move > float(bot_config.EVA_WICK_BTC_MOVE_SOFT_PCT):
-                size_factor *= float(bot_config.EVA_WICK_SOFT_FACTOR)
-                tags.append("soft_btc_move")
-
-        # 4) Location inside the trailing session range.
-        session_pos, day_range_pct = _session_range(ctx.coinbase, float(ctx.spot))
-        if session_pos is None:
-            return None
-        # The 4% day-range gate fired on 38/38 recorded positions — crypto's 24h
-        # range is always wider than that, so it never discriminated and acted as
-        # an undisclosed 0.75x on the configured deploy pct. Carrying the tag for
-        # observability; the measured range is recorded in the trigger reason so a
-        # threshold that actually separates cohorts can be swept later.
-        if day_range_pct is not None and day_range_pct > float(
-            bot_config.EVA_WICK_MAX_DAY_RANGE_PCT
-        ):
-            tags.append("wide_day_range")
-
-        # 5) Pattern selection.
-        lean = h1["stance"] if h1["stance"] != "neutral" else h4["stance"]
-        excursion = float(ctx.spot_vs_strike_pct)  # + == spot above strike
-        min_exc = float(bot_config.EVA_WICK_MIN_EXCURSION_PCT)
-        edge_lo = float(bot_config.EVA_WICK_RANGE_EDGE_LOW)
-        edge_hi = float(bot_config.EVA_WICK_RANGE_EDGE_HIGH)
-        min_m15 = float(bot_config.EVA_WICK_MIN_M15_CONF)
-
-        side: str | None = None
-        pattern = ""
-        wick_line = ""
-        if lean == "bearish" and excursion >= min_exc and session_pos >= edge_hi:
-            side, pattern = "NO", "fade_pop"
-            wick_line = (
-                "Pop into the top of the session range against a bearish EVA lean — "
-                "most candles don't close on their highs; fading the wick."
+            gate_reason, chop = kalshi_regime.entry_gate(
+                self.bot_id, ctx.coinbase, now=ctx.clock()
             )
-        elif lean == "bullish" and excursion <= -min_exc and session_pos <= edge_lo:
-            side, pattern = "YES", "fade_pop"
-            wick_line = (
-                "Flush into the bottom of the session range against a bullish EVA "
-                "lean — most candles don't close on their lows; fading the wick."
-            )
-        elif (
-            m15["stance"] == "bullish"
-            and m15["confidence"] >= min_m15
-            and excursion <= -min_exc
-            and session_pos <= edge_lo
-        ):
-            side, pattern = "YES", "buy_overshoot"
-            wick_line = (
-                "Overshoot into the session low with EVA's M15 already flipped "
-                "bullish — buying the oversold reversion."
-            )
-        elif (
-            m15["stance"] == "bearish"
-            and m15["confidence"] >= min_m15
-            and excursion >= min_exc
-            and session_pos >= edge_hi
-        ):
-            side, pattern = "NO", "buy_overshoot"
-            wick_line = (
-                "Overshoot into the session high with EVA's M15 already flipped "
-                "bearish — selling the overbought reversion."
-            )
-
-        if side is None:
-            if ctx.near_decision:
-                return kalshi_finalize.make_skip(
-                    rationale=(
-                        f"eva_wick: no setup — lean={lean}, m15={m15['stance']} "
-                        f"{m15['confidence']:.2f}, excursion={excursion:+.3f}%, "
-                        f"session_pos={session_pos:.2f}"
-                    ),
-                    base=base,
-                    skip_codes=["eva_no_setup"],
-                    setup_tags=tags,
-                    trigger_type="eva_wick",
-                    trigger_name="no_setup",
-                )
-            return None
-
-        # 6) Price gates on the side we buy (boss rule 1, soft band above 33c).
-        side_mid = kalshi_triggers.side_mid_cents(side, float(mid))
-        soft_max = float(bot_config.EVA_WICK_SOFT_MAX_ENTRY_CENTS)
-        hard_max = float(bot_config.EVA_WICK_MAX_ENTRY_CENTS)
-        min_entry = float(bot_config.EVA_WICK_MIN_ENTRY_CENTS)
-        if side_mid > soft_max:
-            return kalshi_finalize.make_skip(
-                rationale=(
-                    f"eva_wick {pattern}: setup present but {side} at "
-                    f"{side_mid:.1f}¢ > {soft_max:.0f}¢ ceiling — no edge in "
-                    "paying up for a wick"
-                ),
-                base=base,
-                skip_codes=["eva_rich"],
-                setup_tags=tags + [pattern, "rich"],
-                trigger_type="eva_wick",
-                trigger_name=pattern,
-            )
-        if side_mid < min_entry:
-            return kalshi_finalize.make_skip(
-                rationale=(
-                    f"eva_wick {pattern}: {side} at {side_mid:.1f}¢ < "
-                    f"{min_entry:.0f}¢ — lottery-cheap usually means trend, not wick"
-                ),
-                base=base,
-                skip_codes=["eva_too_cheap"],
-                setup_tags=tags + [pattern, "too_cheap"],
-                trigger_type="eva_wick",
-                trigger_name=pattern,
-            )
-        if side_mid > hard_max:
-            size_factor *= float(bot_config.EVA_WICK_SOFT_FACTOR)
-            tags.append("soft_rich")
-
-        # 7) Hour-quarter gate (boss rule 2, soft) + last-15 priority.
-        quarter = _window_quarter(ctx.expiry_ts)
-        if quarter == "mid":
-            size_factor *= float(bot_config.EVA_WICK_SOFT_FACTOR)
-            tags.append("soft_mid_hour")
-        elif quarter == "last15":
-            size_factor *= float(bot_config.EVA_WICK_PRIORITY_BOOST)
-            tags.append("last15_priority")
-
-        # 8) Alignment boost: confident M15 agreeing with the side.
-        m15_agrees = (side == "YES" and m15["stance"] == "bullish") or (
-            side == "NO" and m15["stance"] == "bearish"
-        )
-        if m15_agrees and m15["confidence"] >= float(
-            bot_config.EVA_WICK_STRONG_M15_CONF
-        ):
-            size_factor *= float(bot_config.EVA_WICK_PRIORITY_BOOST)
-            tags.append("m15_conviction")
-
-        deploy = float(bot_config.KALSHI_DEPLOY_PCT) * size_factor
-        deploy = max(0.005, min(deploy, float(bot_config.KALSHI_MAX_DEPLOY_PCT)))
-
-        # 9) Broadcast rationale — location / EVA lean / mispricing / wick logic.
-        implied_against = 100.0 - side_mid
-        rationale = (
-            f"{bot_config.product_label(ctx.coinbase)} at {session_pos:.0%} of its "
-            f"session range, {excursion:+.2f}% through the strike. "
-            f"EVA: H4 {h4['stance']} {h4['confidence']:.2f} / H1 {h1['stance']} "
-            f"{h1['confidence']:.2f} / M15 {m15['stance']} {m15['confidence']:.2f}. "
-            f"Market pricing {implied_against:.0f}% against that lean — "
-            f"{side} on sale at {side_mid:.0f}¢. {wick_line}"
-        )
-
-        htf_bias = {"bullish": "bull", "bearish": "bear"}.get(lean, "mixed")
-        sug = kalshi_finalize.finalize_directional(
-            side=side,
-            trigger_reason=(
-                f"{pattern}: session_pos={session_pos:.2f}, "
-                f"excursion={excursion:+.3f}%, quarter={quarter}, "
-                f"btc_1h={btc_move if btc_move is None else round(btc_move, 3)}%, "
-                f"day_range={day_range_pct if day_range_pct is None else round(day_range_pct, 2)}%"
-            ),
-            trigger_type="eva_wick",
-            base=base,
-            mid=float(mid),
-            fair_cents=ctx.fair_yes_cents,
-            edge=ctx.edge_cents,
-            expiry_s=ctx.expiry_ts,
-            htf_bias=htf_bias,
-            ict_bias=htf_bias,
-            ict_rationale=rationale,
-            gate_outcome=pattern,
-            setup_tags=tags + [pattern],
-            require_edge=False,
-            deploy_pct=deploy,
-            trigger_name=pattern,
-            # Price the book at the side mid: a live IOC adds
-            # KALSHI_LIVE_TAKE_CENTS and can cross; the legacy −3¢ "intended
-            # limit" model can never fill as a live IOC (pure paper optimism).
-            entry_at_mid=True,
-        )
-        sug.bot_id = self.bot_id
-        if sug.is_trade():
-            # Broadcast chart: reconstructed H1/M15/M5 with order blocks and
-            # the EVA stances in the header (structure slot -> sent first).
-            try:
-                import eva_charts
-
-                sug.structure_chart_path = eva_charts.build_eva_entry_chart(
-                    product_id=ctx.product_id,
-                    coinbase=ctx.coinbase,
-                    side=side,
-                    entry_side_cents=side_mid,
-                    strike=float(ctx.strike),
-                    expiry_ts=str(ctx.expiry_ts),
-                    stances=stances,
-                    pattern=pattern,
-                    wick_line=wick_line,
-                    session_pos=session_pos,
-                    btc_move=btc_move,
-                )
-            except Exception:
-                logger.exception("eva_wick: entry chart build failed")
-            paper.set_window_arm(
-                bot_id=self.bot_id,
-                market_ticker=ctx.market_ticker,
-                armed_side=side,
-                arm_yes_mid=float(mid),
-                arm_side_mid=side_mid,
-                arm_spot=ctx.spot,
-                arm_strike=ctx.strike,
-                ict_bias=htf_bias,
-                htf_bias=htf_bias,
-                meta={_DONE_META_KEY: 1, "pattern": pattern, "cycle_id": ctx.cycle_id},
-            )
-        return sug
-
-    # ---------------------------------------------------------- double-down
-    def _maybe_double_down(self, ctx: SharedCycleContext) -> bool:
-        """Boss scale-in rule (paper experiment, 2026-09-08).
-
-        Bought in the 29-33¢ band and the side dips under 12¢ → double the
-        position at the prevailing mid (~11¢). If it recovers to 29¢ → sell
-        the added contracts and let the original ride. Paper-only: never runs
-        while eva_wick routes live orders, so the ledger and the exchange
-        account cannot diverge.
-        """
-        if not bool(bot_config.EVA_WICK_DD_ENABLED):
-            return False
-        if bot_config.bot_is_live(self.bot_id):
-            return False
-        mid = ctx.yes_mid_cents
-        if mid is None:
-            return False
-        try:
-            positions = paper.get_open_positions(bot_id=self.bot_id)
-        except Exception:
-            logger.exception("eva_wick: open-position lookup failed (dd)")
-            return False
-        for pos in positions:
-            if str(pos.get("market_ticker")) != ctx.market_ticker:
-                continue
-            pos_id = int(pos["id"])
-            side = str(pos.get("side") or "").upper()
-            contracts = int(pos.get("contracts") or 0)
-            entry = float(pos.get("entry_cents") or 0)
-            if entry <= 0 or contracts < 1:
-                continue
-            side_now = kalshi_triggers.side_mid_cents(side, float(mid))
-            arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
-            meta = _arm_meta(arm) if arm else {}
-            dd_added = int(meta.get("dd_added") or 0)
-
-            if dd_added > 0:
-                # Recovery leg: trim the add, keep the original runner.
-                if side_now < float(bot_config.EVA_WICK_DD_TRIM_CENTS):
-                    continue
-                sell = min(dd_added, contracts - 1)
-                if sell < 1:
-                    continue
-                updated = paper.scale_out_position(
-                    pos_id,
-                    sell_contracts=sell,
-                    price_cents=side_now,
-                    reason="eva_wick_dd_trim",
-                )
-                if updated is None:
-                    continue
-                paper.update_window_arm_meta(
-                    self.bot_id, ctx.market_ticker, {"dd_added": 0, "dd_trimmed": 1}
-                )
-                self._notify_dd(
-                    ctx,
-                    f"↩️ [eva_wick] Double-down cashed {ctx.market_ticker}: sold "
-                    f"{sell} {side} back at {side_now:.0f}¢ (added near "
-                    f"{float(meta.get('dd_add_price') or 0):.0f}¢). Original "
-                    f"{contracts - sell} ct rides.",
-                )
-                return True
-
-            # Add leg: original entry in band, side crushed under the trigger.
-            orig_entry = float(meta.get("dd_orig_entry") or entry)
-            if not (
-                float(bot_config.EVA_WICK_DD_MIN_ENTRY_CENTS)
-                <= orig_entry
-                <= float(bot_config.EVA_WICK_DD_MAX_ENTRY_CENTS)
-            ):
-                continue
-            if side_now > float(bot_config.EVA_WICK_DD_TRIGGER_CENTS) or side_now <= 0:
-                continue
-            if meta.get("dd_trimmed"):  # one round trip per window
-                continue
-            updated = paper.scale_in_position(
-                pos_id,
-                add_contracts=contracts,
-                price_cents=side_now,
-                reason="eva_wick_dd_add",
-            )
-            if updated is None:
-                continue
-            paper.update_window_arm_meta(
-                self.bot_id,
-                ctx.market_ticker,
-                {
-                    "dd_added": contracts,
-                    "dd_orig_entry": orig_entry,
-                    "dd_add_price": side_now,
-                },
-            )
-            self._notify_dd(
-                ctx,
-                f"🎯 [eva_wick] Double-down {ctx.market_ticker}: {side} crushed to "
-                f"{side_now:.0f}¢ from a {orig_entry:.0f}¢ entry — adding "
-                f"{contracts} ct (boss rule: back the same read at a better "
-                f"price; trim at {bot_config.EVA_WICK_DD_TRIM_CENTS:.0f}¢).",
-            )
-            return True
-        return False
-
-    @staticmethod
-    def _notify_dd(ctx: SharedCycleContext, text: str) -> None:
-        try:
-            import notify
-
-            notify.broadcast_plain_text(text)
-        except Exception:
-            logger.exception("eva_wick: dd notify failed")
-
-    # ---------------------------------------------------------- take-profit
-    def _maybe_take_profit(self, ctx: SharedCycleContext) -> bool:
-        """Flatten an open position early when the side roughly doubles.
-
-        Paper: mark the book flat at the side mid (as before). Live: actually
-        exit on the exchange first — buy the opposite side fill-or-kill so
-        Kalshi nets the position — and only flatten the book at the real fill.
-        If the live exit doesn't fill, keep the position open and retry next
-        tick; never let the ledger diverge from the account.
-        """
-        mid = ctx.yes_mid_cents
-        if mid is None:
-            return False
-        try:
-            positions = paper.get_open_positions(bot_id=self.bot_id)
-        except Exception:
-            logger.exception("eva_wick: open-position lookup failed")
-            return False
-        for pos in positions:
-            if str(pos.get("market_ticker")) != ctx.market_ticker:
-                continue
-            entry = float(pos.get("entry_cents") or 0)
-            if entry <= 0:
-                continue
-            pos_side = str(pos.get("side") or "").upper()
-            contracts = int(pos.get("contracts") or 0)
-            side_now = kalshi_triggers.side_mid_cents(pos_side, float(mid))
-            # After a double-down the stored entry is the blended average;
-            # the TP target stays anchored to the original entry.
-            arm = paper.get_window_arm(self.bot_id, ctx.market_ticker)
-            meta = _arm_meta(arm) if arm else {}
-            tp_base = float(meta.get("dd_orig_entry") or entry)
-            target = tp_base * float(bot_config.EVA_WICK_TP_MULTIPLE)
-            if side_now < target:
-                continue
-
-            exit_cents = self._execute_live_exit(
-                ctx, pos_side=pos_side, contracts=contracts, side_now=side_now
-            )
-            if exit_cents is None:
-                # Live exit unfilled/rejected — position stays open, retry.
-                return False
-
-            closed = paper.flatten_position_early(
-                int(pos["id"]),
-                exit_side_cents=exit_cents,
-                reason="eva_wick_tp",
-            )
-            if closed:
+            if gate_reason:
                 logger.info(
-                    "eva_wick TP: %s %s %s @ %.1f¢ -> %.1f¢",
+                    "%s gated (%s) chop=%s on %s",
+                    self.bot_id, gate_reason, chop.get("chop"),
                     ctx.market_ticker,
-                    pos_side,
-                    contracts,
-                    entry,
-                    exit_cents,
                 )
-                self._notify_tp(ctx, pos, entry, exit_cents)
-                return True
-        return False
+                return None
 
-    @staticmethod
-    def _execute_live_exit(
-        ctx: SharedCycleContext,
-        *,
-        pos_side: str,
-        contracts: int,
-        side_now: float,
-    ) -> float | None:
-        """Exit on the exchange by buying the opposite side (Kalshi nets).
-
-        Returns the realized exit in *our side's* cents, or None when the
-        exit did not fully fill (paper mode returns the mid mark unchanged).
-        Fill-or-kill keeps it all-or-nothing so the book mirrors the account.
-        """
+        # Qualify on the mid, but pay the ask. A limit at the mid only fills
+        # when the book comes to us, which selects against this sleeve: the
+        # favourite runs away precisely when the tape is confirming it, so the
+        # trades we miss are the ones we wanted. The backtest is still positive
+        # paying 6c through the mid, so crossing is affordable; overpaying past
+        # max_pay is not, and skipping there also records the wide-book cases
+        # we have no historical bid/ask for.
         import kalshi_client
 
-        opp = "NO" if pos_side == "YES" else "YES"
-        # Opposite side priced at its mid; place_order adds LIVE_TAKE aggression.
-        opp_mid = max(1.0, min(99.0, 100.0 - side_now))
-        try:
-            resp = kalshi_client.place_order(
-                ctx.market_ticker,
-                opp,
-                contracts,
-                yes_price_cents=int(round(opp_mid)),
-                time_in_force="fill_or_kill",
-                closing=True,
-                paper=not bot_config.bot_is_live("eva_wick"),
-            )
-        except Exception:
-            logger.exception(
-                "eva_wick: live TP exit failed for %s — leaving position open",
-                ctx.market_ticker,
+        ask = kalshi_client.side_ask_cents_from_market(side, ctx.market)
+        entry = side_now if ask is None else float(ask)
+        max_pay = float(bot_config.EVA_FAV_MAX_PAY_CENTS)
+        if entry > max_pay:
+            logger.info(
+                "eva_wick: %s %s ask %.1fc over max pay %.0fc (mid %.1fc) — skip",
+                ctx.market_ticker, side, entry, max_pay, side_now,
             )
             return None
 
-        status = str((resp or {}).get("status") or "")
-        if status == "paper_only":
-            return side_now
-        if not isinstance(resp, dict) or resp.get("error") or status == "rejected":
-            logger.warning("eva_wick: TP exit order error: %s", resp)
+        import kalshi_sizing
+
+        contracts, _ = kalshi_sizing.contracts_for_entry(entry, bot_id=self.bot_id)
+        contracts = kalshi_sizing.clamp_contracts(contracts, entry, bot_id=self.bot_id)
+        if contracts < 1:
             return None
-        filled = kalshi_client.filled_contract_count(resp)
-        if filled < contracts:
-            logger.info(
-                "eva_wick: TP exit FOK unfilled (%s/%s) on %s — retry next tick",
-                filled,
-                contracts,
-                ctx.market_ticker,
-            )
+
+        contracts, entry, fill_meta = self.size_for_fill(
+            ctx, side, entry, contracts
+        )
+        if contracts < 1:
             return None
-        # average_fill_price is in YES terms; map back to our side's cents.
-        return kalshi_client.side_fill_cents_from_response(
-            pos_side,
-            resp,
-            fallback_side_cents=side_now,
+
+        label = bot_config.product_label(ctx.coinbase)
+        dir_word = "up" if side == "YES" else "down"
+        rationale = (
+            f"{label} is {dir_word} through the strike and the book prices that "
+            f"side at {side_now:.0f}¢ with ~{seconds_left / 60.0:.1f} min left; "
+            f"paying the {entry:.1f}¢ ask ({entry - side_now:+.1f}¢ vs mid). "
+            f"Mid-window favourites in the {min_px:.0f}-{max_px:.0f}¢ band settled "
+            f"86% over the epoch against a 73¢ average cost — the longshot side "
+            f"is the overpriced one here. No directional view of our own: the "
+            f"edge is in the market's own pricing of the tail. Held to settlement."
         )
 
-    @staticmethod
-    def _notify_tp(
-        ctx: SharedCycleContext, pos: dict[str, Any], entry: float, exit_c: float
-    ) -> None:
-        try:
-            import notify
-
-            pnl = (exit_c - entry) / 100.0 * float(pos.get("contracts") or 0)
-            notify.broadcast_plain_text(
-                f"💰 [eva_wick] Take-profit {ctx.market_ticker}: "
-                f"{pos.get('side')} ×{pos.get('contracts')} "
-                f"{entry:.0f}¢ → {exit_c:.0f}¢ (+${pnl:.2f}). "
-                f"Wick played out — not waiting on settlement risk."
-            )
-        except Exception:
-            logger.exception("eva_wick: TP notify failed")
+        paper.set_window_arm(
+            bot_id=self.bot_id,
+            market_ticker=ctx.market_ticker,
+            armed_side=side,
+            arm_yes_mid=mid_f,
+            arm_side_mid=side_now,
+            arm_spot=ctx.spot,
+            arm_strike=ctx.strike,
+            ict_bias=None,
+            htf_bias=None,
+            meta={
+                _DONE_META_KEY: 1,
+                "entry_side": side,
+                "entry_side_mid": side_now,
+                "entry_ask": entry,
+                "ask_vs_mid": round(entry - side_now, 2),
+                "seconds_left": seconds_left,
+                "cycle_id": ctx.cycle_id,
+                **fill_meta,
+            },
+        )
+        return KalshiSuggestion(
+            series=ctx.series,
+            market_ticker=ctx.market_ticker,
+            side=side,
+            contracts=contracts,
+            entry_cents=float(entry),
+            expiry_ts=ctx.expiry_ts,
+            rationale=rationale,
+            product_id=ctx.product_id,
+            fair_yes_cents=ctx.fair_yes_cents,
+            mid_cents=mid_f,
+            edge_cents=ctx.edge_cents,
+            spot=ctx.spot,
+            strike=ctx.strike,
+            spot_vs_strike_pct=ctx.spot_vs_strike_pct,
+            tau_sec=ctx.tau_sec,
+            sigma=ctx.sigma,
+            prior_5m_ret=ctx.prior_5m_ret,
+            prior_15m_ret=ctx.prior_15m_ret,
+            prior_1h_ret=ctx.prior_1h_ret,
+            trigger_type="eva_wick",
+            trigger_name="midwindow_favourite",
+            setup_tags=[
+                "eva_wick",
+                f"favourite_{side.lower()}",
+                f"t{seconds_left / 60.0:.0f}min",
+                "midwindow_favourite",
+            ],
+            cycle_id=ctx.cycle_id,
+            bot_id=self.bot_id,
+            seconds_to_expiry=seconds_left,
+        )

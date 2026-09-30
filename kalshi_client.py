@@ -153,6 +153,149 @@ def mid_cents_from_market(market: dict[str, Any]) -> float | None:
     return round((bid + ask) / 2.0, 4)
 
 
+def side_ask_cents_from_market(side: str, market: dict[str, Any]) -> float | None:
+    """What it actually costs to buy ``side`` right now, in cents.
+
+    The mid is not a price you can trade at. A limit sitting at the mid only
+    fills if the book comes to you, which in a fast tape means you miss exactly
+    the moves going your way — so any sleeve that must get filled should price
+    off this instead.
+
+    Kalshi quotes both books, but the NO side is derivable from YES and is the
+    more reliable of the two when one is empty: NO ask = 100 - YES bid.
+    """
+    side_u = str(side).upper()
+    if side_u == "YES":
+        direct = _dollars_to_cents(market.get("yes_ask_dollars"))
+        if direct is not None:
+            return direct
+        opposite = _dollars_to_cents(market.get("no_bid_dollars"))
+        return None if opposite is None else round(100.0 - opposite, 4)
+    if side_u == "NO":
+        direct = _dollars_to_cents(market.get("no_ask_dollars"))
+        if direct is not None:
+            return direct
+        opposite = _dollars_to_cents(market.get("yes_bid_dollars"))
+        return None if opposite is None else round(100.0 - opposite, 4)
+    return None
+
+
+def spread_cents_from_market(market: dict[str, Any]) -> float | None:
+    """Quoted bid/ask width in cents, or None when either side is empty."""
+    bid = _dollars_to_cents(market.get("yes_bid_dollars"))
+    ask = _dollars_to_cents(market.get("yes_ask_dollars"))
+    if bid is None or ask is None:
+        return None
+    return round(ask - bid, 4)
+
+
+def side_ask_depth_contracts(side: str, market: dict[str, Any]) -> float | None:
+    """Contracts resting at the price ``side`` can be bought at right now.
+
+    Kalshi quotes one book (YES), so the NO ask is the YES bid seen from the
+    other direction: buying NO at 100 − yes_bid matches against exactly the
+    size resting on that bid. Only the touch is published on the market
+    payload, so this is top-of-book depth, not the whole ladder — which is the
+    conservative reading for sizing a marketable order.
+
+    None when the size fields are absent (older payloads), so callers can tell
+    "no depth" apart from "depth unknown" and fail open rather than freeze.
+    """
+    side_u = str(side).upper()
+    if side_u == "YES":
+        raw = market.get("yes_ask_size_fp")
+    elif side_u == "NO":
+        raw = market.get("yes_bid_size_fp")
+    else:
+        return None
+    if raw is None or raw == "":
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def ask_ladder_from_orderbook(
+    side: str, book: dict[str, Any]
+) -> list[tuple[float, float]]:
+    """(price_cents, contracts) you could buy ``side`` at, cheapest first.
+
+    Kalshi publishes two ladders of *resting bids*, one per side. Buying YES
+    means matching someone who is bidding for NO, so the YES ask ladder is the
+    NO bid ladder priced from the other end: ask = 100 − no_bid, and the
+    cheapest ask is the *highest* NO bid. Mirrored for NO.
+    """
+    side_u = str(side).upper()
+    if side_u == "YES":
+        key, legacy = "no_dollars", "no"
+    elif side_u == "NO":
+        key, legacy = "yes_dollars", "yes"
+    else:
+        return []
+
+    levels = book.get(key)
+    scale = 100.0  # dollars -> cents
+    if levels is None:
+        levels = book.get(legacy)
+        scale = 1.0  # legacy ladders are already in cents
+    if not levels:
+        return []
+
+    out: list[tuple[float, float]] = []
+    for level in levels:
+        try:
+            resting = float(level[0]) * scale
+            size = float(level[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if size <= 0:
+            continue
+        out.append((round(100.0 - resting, 4), size))
+    out.sort(key=lambda lv: lv[0])
+    return out
+
+
+def simulate_ioc_fill(
+    ladder: list[tuple[float, float]],
+    contracts: int,
+    limit_cents: float,
+) -> tuple[int, float | None]:
+    """(filled, average price) for a marketable order walking ``ladder``.
+
+    This is what the exchange does to a live immediate-or-cancel order: eat
+    levels from the cheapest up while they are inside the limit, then cancel
+    whatever is left unfilled. Returns (0, None) when nothing is reachable.
+    """
+    want = max(0, int(contracts))
+    filled = 0
+    cost = 0.0
+    for price, size in ladder:
+        if filled >= want or price > limit_cents + 1e-9:
+            break
+        take = min(want - filled, int(size))
+        if take <= 0:
+            continue
+        filled += take
+        cost += take * price
+    if filled < 1:
+        return 0, None
+    return filled, round(cost / filled, 4)
+
+
+def get_ask_ladder(side: str, ticker: str) -> list[tuple[float, float]] | None:
+    """Live ask ladder for ``side``; None when the book cannot be read."""
+    try:
+        data = request("GET", f"/markets/{ticker}/orderbook", auth=True)
+    except Exception:
+        logger.exception("orderbook fetch failed for %s", ticker)
+        return None
+    book = data.get("orderbook_fp") or data.get("orderbook") or data
+    if not isinstance(book, dict):
+        return None
+    return ask_ladder_from_orderbook(side, book)
+
+
 def get_markets(
     series_ticker: str,
     *,

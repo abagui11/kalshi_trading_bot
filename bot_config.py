@@ -11,11 +11,32 @@ DEFAULT_PRODUCT_ID = "BTC-USD"
 SERIES_TO_PRODUCT: dict[str, str] = {
     "KXBTC15M": "BTC",
     "KXETH15M": "ETH",
+    "KXXRP15M": "XRP",
+    "KXSOL15M": "SOL",
+    "KXHYPE15M": "HYPE",
 }
 PRODUCT_TO_COINBASE: dict[str, str] = {
     "BTC": "BTC-USD",
     "ETH": "ETH-USD",
+    "XRP": "XRP-USD",
+    "SOL": "SOL-USD",
+    "HYPE": "HYPE-USD",
 }
+
+# Paper-only clones of the eva_wick favourite rule, one per altcoin series.
+# Same rule, same knobs, different market — the point is to find out whether
+# the favourite-longshot mispricing the rule feeds on is a property of these
+# 15m binaries generally or only of the two books we happen to have measured.
+ALT_WICK_VARIANTS: dict[str, str] = {
+    "eva_wick_xrp": "KXXRP15M",
+    "eva_wick_sol": "KXSOL15M",
+    "eva_wick_hype": "KXHYPE15M",
+}
+
+# Bots that may never send a real order, whatever the env says. This is a
+# code-level guard rather than an env one because KALSHI_LIVE_BOTS is a
+# whitelist that an operator edits under time pressure.
+PAPER_ONLY_BOTS: frozenset[str] = frozenset(ALT_WICK_VARIANTS)
 
 # When True, Telegram only gets DMs on real paper trades (not skips).
 # Default False: operator always sees skip rationales (ICT port requirement).
@@ -125,11 +146,27 @@ def bot_is_live(bot_id: str | None) -> bool:
     non-empty list is a whitelist — e.g. KALSHI_LIVE_BOTS=eva_streak keeps
     eva_wick's control book on paper while the streak bot trades the account.
     """
+    if str(bot_id or "") in PAPER_ONLY_BOTS:
+        return False
     if config.KALSHI_PAPER_ONLY:
         return False
     if not config.KALSHI_LIVE_BOTS:
         return True
     return str(bot_id or "control") in config.KALSHI_LIVE_BOTS
+
+
+KALSHI_BOT_MAX_CONTRACTS = config.KALSHI_BOT_MAX_CONTRACTS
+
+
+def bot_max_contracts(bot_id: str | None) -> int:
+    """Contract ceiling for one bot — its own cap, else the global one.
+
+    Lets a sleeve that has earned size run bigger without rescaling the other
+    books mid-epoch, which would break their comparability.
+    """
+    own = KALSHI_BOT_MAX_CONTRACTS.get(str(bot_id or ""))
+    cap = int(KALSHI_MAX_CONTRACTS)
+    return max(0, min(cap, int(own)) if own is not None else cap)
 
 # Conviction × agree/contra deploy matrix (fraction of book).
 CONVICTION_HIGH_SCORE = 0.75
@@ -161,10 +198,28 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "control": "Control (conviction ICT)",
     "lottery": "Lottery / hail-mary",
     "adverse": "Adverse / wick-hunt",
-    "eva_wick": "EVA wick",
+    "eva_wick": "EVA favourite (mid-window)",
+    "eva_wick_fade_v1": "EVA wick fade (retired 2026-09-17)",
     "eva_streak": "EVA reversal",
     "eva_arb": "EVA arb",
+    "eva_wick_xrp": "EVA favourite · XRP (paper)",
+    "eva_wick_sol": "EVA favourite · SOL (paper)",
+    "eva_wick_hype": "EVA favourite · HYPE (paper)",
 }
+
+
+def active_series() -> tuple[str, ...]:
+    """Series the cycle polls: the core books plus any enabled altcoin clone.
+
+    An altcoin series is only polled when its bot is in ENABLED_BOTS, so the
+    default profile makes exactly the same Kalshi calls it made before.
+    """
+    out = list(KALSHI_SERIES)
+    for bot_id in ENABLED_BOTS:
+        series = ALT_WICK_VARIANTS.get(bot_id)
+        if series and series not in out:
+            out.append(series)
+    return tuple(out)
 
 # Shared ICT/HTF Claude refresh (aliases to config).
 HTF_REFRESH_MODE: str = config.HTF_REFRESH_MODE
@@ -192,37 +247,41 @@ ADVERSE_MIN_ARM_SIDE_MID_CENTS = 35.0  # do not arm when side already cheap
 # Stub for later: allow last-3m block exception on strong HTF + cheap underdog.
 STRONG_SIGNAL_OVERRIDE = False
 
-# EVA wick bot (zero-Claude; bias from hub intel_stances via eva_intel).
-# Boss rule 1: never buy above 33¢ — soft band to 40¢ at reduced size.
-EVA_WICK_MAX_ENTRY_CENTS = 33.0
-EVA_WICK_SOFT_MAX_ENTRY_CENTS = 40.0
-EVA_WICK_MIN_ENTRY_CENTS = 15.0  # lottery-cheap usually = trend, not wick
-# Boss rule 3: BTC trailing-hour net move; soft above 0.5%, hard skip above 0.75%.
-EVA_WICK_BTC_MOVE_SOFT_PCT = 0.5
-EVA_WICK_BTC_MOVE_HARD_PCT = 0.75
-# Min |spot vs strike| excursion (%) to call it a pop/flush worth fading.
-EVA_WICK_MIN_EXCURSION_PCT = 0.03
-# Session-range location bands (trailing ~6h): edges where wicks are bought.
-EVA_WICK_RANGE_EDGE_LOW = 0.30
-EVA_WICK_RANGE_EDGE_HIGH = 0.70
-# 24h range wider than this → not the quiet regime the strategy wants (soft).
-EVA_WICK_MAX_DAY_RANGE_PCT = 4.0
-# M15 stance confidence needed for the buy_overshoot pattern / conviction boost.
-EVA_WICK_MIN_M15_CONF = 0.55
-EVA_WICK_STRONG_M15_CONF = 0.65
-# Soft-gate size multiplier and priority boost (last-15 window / M15 conviction).
-EVA_WICK_SOFT_FACTOR = 0.5
-EVA_WICK_PRIORITY_BOOST = 1.25
-EVA_WICK_TP_MULTIPLE = config.EVA_WICK_TP_MULTIPLE
-# Boss double-down rule (2026-09-08, paper experiment on the control book):
-# bought in the 29-33¢ band and the side dips under 12¢ → add the same size
-# (~11¢); if it climbs back to 29¢ → sell the added contracts (keep original).
-# Paper-only: skipped whenever eva_wick routes live (bot_is_live).
-EVA_WICK_DD_ENABLED = False  # disabled 2026-09-09: 0/5 adds, −$1.96 in experiment epoch
-EVA_WICK_DD_MIN_ENTRY_CENTS = 29.0
-EVA_WICK_DD_MAX_ENTRY_CENTS = 33.0
-EVA_WICK_DD_TRIGGER_CENTS = 12.0
-EVA_WICK_DD_TRIM_CENTS = 29.0
+# EVA wick bot — redefined 2026-09-17 as "buy the mid-window favourite".
+# The old fade strategy (cheap 20-33¢ side on a wick setup) is retired: an
+# out-of-sample search over 2,051 logged cycles found that buying *blind* in
+# the 20-33¢ band loses ~11 points against the price paid, and the old sleeve
+# lost 10.7 — its trigger, M15 gate and excursion filters added nothing at all.
+# The favourite side is mispriced the other way, but only mid-window:
+#   12.5-15 min left  +2.7 pts (t=0.3)   <- where the old bot traded
+#   4-10 min left    +13.0 pts (t=3.5)   <- this rule
+#   last 2 min        -4.9 pts (t=-3.3)  <- where eva_arb trades and loses
+# Epoch backtest of exactly this rule: 151 entries, 86.1% win at 73.3¢,
+# +$0.098/contract at mid+1¢ (t=3.48), 13/15 days green, worst drawdown
+# $1.84/contract, and still profitable paying 6¢ through the mid — which is why
+# it can ship before we have recorded bid/ask for this part of the window.
+EVA_FAV_MIN_ENTRY_CENTS = 67.0
+EVA_FAV_MAX_ENTRY_CENTS = 80.0
+# Qualify on the mid, pay the ask. A mid-priced limit only fills when the book
+# comes to us, which selects against a favourite sleeve — the price runs away
+# exactly when the tape confirms the side (first live attempt, 2026-09-17
+# 16:36, missed a winner this way). Crossing is affordable because the rule
+# stays positive at mid+6¢; paying past this cap is not, and the skips record
+# the wide-book cases we have no historical bid/ask for.
+EVA_FAV_MAX_PAY_CENTS = 82.0
+# The clock is half the rule; outside this the same trade is fair or negative.
+EVA_FAV_MIN_SECONDS_LEFT = 240.0
+EVA_FAV_MAX_SECONDS_LEFT = 600.0
+# Altcoin clones only (eva_wick_xrp/sol/hype). The rule is unchanged — the
+# max-pay cap above is already the spread guard, since a wide book pushes the
+# ask past 82¢ and the entry is skipped. What these books additionally need is
+# fill realism. The live book learns its fill from the exchange (fill_count
+# and average_fill_price go straight into the ledger, partials included); a
+# paper clone has to reconstruct it, by walking the published ask ladder with
+# the same limit a live IOC would carry. Turning this off fills the whole clip
+# at the touch, which is what the pre-2026-09-30 paper books did and which
+# overstates a thin book. See strategies/eva_wick_alt.py.
+EVA_FAV_ALT_TRIM_TO_DEPTH = True
 
 # EVA streak bot (streak-reversal signal, mid entry since 2026-09-08).
 # Evidence: backtest/dan_rules_study.py + dan_rules_pricing.py — reversal after
@@ -237,6 +296,14 @@ EVA_STREAK_MAX_LOOKBACK = 8  # candles inspected for the run (fetch bound)
 EVA_STREAK_REQUIRE_SWEEP = True  # last run candle must take the prior extreme
 EVA_STREAK_MIN_SIDE_MID = 45.0  # below this the market still prices continuation
 EVA_STREAK_MAX_SIDE_MID = 65.0  # above this the reversal is already priced in
+# Hot-tape gate — DISABLED 2026-09-14 after failing its out-of-sample test.
+# It shipped on 2026-09-10 in-sample evidence (entries with the trailing hour
+# still moving >0.4% were 5W/14L). Scoring the 31 setups it actually blocked
+# against recorded settlements gave +$0.060/trade vs +$0.058/trade for the
+# setups it allowed — no discrimination at all, while suppressing ~35% of the
+# sample we need to decide whether this strategy has an edge. The mechanism is
+# kept (config-driven) so it can be re-tested; 0 disables.
+EVA_STREAK_MAX_ABS_1H_RET_PCT = 0.0
 EVA_STREAK_TP_MULTIPLE = 2.0  # cash the reversal when the side doubles
 EVA_STREAK_SL_FRACTION = 0.5  # cut when the side halves — "never fully lose"
 EVA_STREAK_COOLDOWN_LOSSES = 2  # this many consecutive SL cuts ...
