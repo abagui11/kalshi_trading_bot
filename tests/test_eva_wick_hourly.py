@@ -14,7 +14,6 @@ from unittest.mock import patch
 import bot_config
 import config
 import eva_wick_hourly
-import kalshi_client
 import paper
 from models import KalshiSuggestion
 
@@ -96,8 +95,8 @@ class HourlyPiggybackTests(unittest.TestCase):
                 ("eva_wick", "eva_wick_1h_ladder", "eva_wick_1h_flat"),
             ),
             patch.object(
-                kalshi_client,
-                "get_open_markets",
+                eva_wick_hourly,
+                "_fetch_markets",
                 lambda series: list(self.chains.get(series, [])),
             ),
         ]
@@ -238,6 +237,17 @@ class HourlyPiggybackTests(unittest.TestCase):
             got,
             {f"{BTC_EVENT}-T84299.99": 4, f"{BTC_EVENT}-T84099.99": 1},
         )
+
+    def test_degenerate_hundred_cent_ask_is_a_skip(self) -> None:
+        # Kalshi's empty-book placeholder ("1.0000" no-ask / 0¢ yes bid)
+        # derives to a ~100¢ "price" nobody is offering — never a fill.
+        chain = [
+            _mkt(BTC_EVENT, s, yes_bid=0.0, yes_ask=None)
+            for s in (84299.99, 84199.99, 84099.99)
+        ]
+        self.chains["KXBTCD"] = chain
+        self.assertEqual(eva_wick_hourly.process_fires([_fire()]), [])
+        self.assertEqual(self._positions("eva_wick_1h_ladder"), [])
 
     def test_missing_spot_places_nothing(self) -> None:
         self.assertEqual(

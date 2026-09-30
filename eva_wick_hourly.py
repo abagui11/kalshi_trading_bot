@@ -87,6 +87,33 @@ def _parse_ts(value: Any) -> datetime | None:
     return dt
 
 
+def _fetch_markets(series: str) -> list[dict[str, Any]]:
+    """Open markets for this series closing within the next ~70 minutes.
+
+    Not ``get_open_markets``: that helper fetches 10 markets and sorts by
+    open time, which is right for the 15m series (one live event of ~10
+    strikes) and wrong here — KXBTCD keeps the current hour open *alongside*
+    future daily-5pm events (measured 2026-09-30: three events, 200 open
+    markets), so a small unwindowed fetch can return only tomorrow's book.
+    The close-time window pins the next top-of-hour settle server-side, so
+    pagination order can never hide it.
+    """
+    now = datetime.now(timezone.utc)
+    data = kalshi_client.request(
+        "GET",
+        "/markets",
+        params={
+            "series_ticker": series,
+            "status": "open",
+            "min_close_ts": int(now.timestamp()),
+            "max_close_ts": int(now.timestamp()) + 70 * 60,
+            "limit": 200,
+        },
+        auth=True,
+    )
+    return list(data.get("markets") or [])
+
+
 def _next_hourly_event(series: str) -> tuple[str | None, list[dict[str, Any]]]:
     """The soonest-settling open hourly event: (event_ticker, strikes asc).
 
@@ -94,7 +121,7 @@ def _next_hourly_event(series: str) -> tuple[str | None, list[dict[str, Any]]]:
     share the same hour but a between-strike does not express "past this
     level", which is what the rungs mean.
     """
-    markets = kalshi_client.get_open_markets(series)
+    markets = _fetch_markets(series)
     groups: dict[str, dict[str, Any]] = {}
     for m in markets:
         event = str(m.get("event_ticker") or "")
@@ -204,11 +231,16 @@ def _open_rung(
     strike = float(market["floor_strike"])
     # Real ask or no trade. Inventing a fill from the mid in a book nobody is
     # quoting is how paper records go bad; a skipped rung is itself data.
+    # An ask at ~100¢ is the same problem in disguise: Kalshi publishes
+    # "1.0000" / a 0¢ opposite bid on an empty book, which derives to a 99-
+    # 100¢ "price" nobody is actually offering (measured on the unopened
+    # next-day KXBTCD chain, 2026-09-30).
     ask = kalshi_client.side_ask_cents_from_market(fire.side, market)
-    if ask is None:
+    if ask is None or float(ask) >= 99.0:
         logger.info(
-            "%s: no %s ask on %s (rung %d) — skip, not inventing a fill",
-            bot_id, fire.side, ticker, rung,
+            "%s: no real %s ask on %s (rung %d, ask=%s) — skip, not "
+            "inventing a fill",
+            bot_id, fire.side, ticker, rung, ask,
         )
         return None
     close = _parse_ts(market.get("close_time"))
