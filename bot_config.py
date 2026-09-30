@@ -44,11 +44,31 @@ ALT_WICK_VARIANTS: dict[str, str] = {
 # tick's fires after the strategy loop.
 HOURLY_WICK_BOTS: tuple[str, ...] = ("eva_wick_1h_ladder", "eva_wick_1h_flat")
 
+# Cross-asset wick books (eva_wick_cross.py): when eva_wick fires on BTC or
+# ETH *and* the EVA board's M15 stance points with the fire, buy the same
+# side of the XRP/SOL/HYPE 15m markets. Enabled via ENABLED_BOTS; fed by
+# run_strategy_cycle after the strategy loop like the hourly books.
+CROSS_WICK_BOTS: tuple[str, ...] = (
+    "eva_wick_btc_xrp",
+    "eva_wick_btc_sol",
+    "eva_wick_btc_hype",
+    "eva_wick_eth_xrp",
+    "eva_wick_eth_sol",
+    "eva_wick_eth_hype",
+)
+
+# Minimum EVA M15 confidence for the cross books' alignment gate — the same
+# 0.55 line every stance gate in this repo has used, pre-registered as part
+# of the rule under test rather than tuned on these books' results.
+EVA_CROSS_MIN_CONF = 0.55
+
 # Bots that may never send a real order, whatever the env says. This is a
 # code-level guard rather than an env one because KALSHI_LIVE_BOTS is a
 # whitelist that an operator edits under time pressure.
-PAPER_ONLY_BOTS: frozenset[str] = frozenset(ALT_WICK_VARIANTS) | frozenset(
-    HOURLY_WICK_BOTS
+PAPER_ONLY_BOTS: frozenset[str] = (
+    frozenset(ALT_WICK_VARIANTS)
+    | frozenset(HOURLY_WICK_BOTS)
+    | frozenset(CROSS_WICK_BOTS)
 )
 
 # When True, Telegram only gets DMs on real paper trades (not skips).
@@ -220,6 +240,12 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "eva_wick_hype": "EVA favourite · HYPE (paper)",
     "eva_wick_1h_ladder": "EVA 1h ladder · wick piggyback (paper)",
     "eva_wick_1h_flat": "EVA 1h flat · wick piggyback (paper)",
+    "eva_wick_btc_xrp": "EVA cross · BTC→XRP (paper)",
+    "eva_wick_btc_sol": "EVA cross · BTC→SOL (paper)",
+    "eva_wick_btc_hype": "EVA cross · BTC→HYPE (paper)",
+    "eva_wick_eth_xrp": "EVA cross · ETH→XRP (paper)",
+    "eva_wick_eth_sol": "EVA cross · ETH→SOL (paper)",
+    "eva_wick_eth_hype": "EVA cross · ETH→HYPE (paper)",
 }
 
 
