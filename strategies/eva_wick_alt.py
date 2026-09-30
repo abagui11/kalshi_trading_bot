@@ -100,6 +100,12 @@ class EvaWickAltStrategy(EvaWickStrategy):
             return contracts, entry_cents, meta
 
         ladder = kalshi_client.get_ask_ladder(side, ctx.market_ticker)
+        # A simulated fill may never beat the best offer the book is quoting.
+        # Dropping levels under the touch rather than repricing them keeps a
+        # misread ladder from silently improving the entry — which is exactly
+        # how the 2026-09-30 SOL row booked 61c against a quoted 69c ask.
+        if ladder:
+            ladder = [lv for lv in ladder if lv[0] >= float(entry_cents) - 1e-9]
         if not ladder:
             # The book is unreadable, not empty — a fetch failure must not be
             # recorded as "no liquidity". Fall through on the touch price and

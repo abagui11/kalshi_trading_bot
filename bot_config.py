@@ -279,9 +279,19 @@ EVA_FAV_MAX_SECONDS_LEFT = 600.0
 # and average_fill_price go straight into the ledger, partials included); a
 # paper clone has to reconstruct it, by walking the published ask ladder with
 # the same limit a live IOC would carry. Turning this off fills the whole clip
-# at the touch, which is what the pre-2026-09-30 paper books did and which
-# overstates a thin book. See strategies/eva_wick_alt.py.
-EVA_FAV_ALT_TRIM_TO_DEPTH = True
+# at the touch, which is what every other paper book in this ledger does.
+#
+# OFF since 2026-09-30, first hour of the epoch: the ladder walk booked a SOL
+# entry at 61.0c against a quoted 69.0c ask — a fill 8c through the touch on
+# the favourable side, which the exchange cannot give. The /orderbook arrays
+# do not mean what ask_ladder_from_orderbook assumes: on a live sample the
+# quoted touch could not be reconstructed from either array under either
+# orientation (deploy/_ladder_orientation.py), and the level sizes do not
+# match yes_bid_size_fp / yes_ask_size_fp, so the depth numbers are not
+# trustworthy either. Until that is pinned down, these books fill at the ask
+# like the live book does, which is also the strict-comparability answer the
+# books exist for. The walk and its tests stay in place behind this flag.
+EVA_FAV_ALT_TRIM_TO_DEPTH = False
 
 # EVA streak bot (streak-reversal signal, mid entry since 2026-09-08).
 # Evidence: backtest/dan_rules_study.py + dan_rules_pricing.py — reversal after

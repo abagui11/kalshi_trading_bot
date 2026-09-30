@@ -122,6 +122,11 @@ class AltWickTests(unittest.TestCase):
             # No network in the default path; tests that exercise the fill
             # model install their own ladder with _ladder().
             patch.object(kalshi_client, "get_ask_ladder", lambda s, t: None),
+            # The ladder walk is OFF in production (see bot_config) because
+            # the published arrays could not be reconciled with the quoted
+            # touch. The cases below still pin its behaviour for whenever it
+            # is re-enabled, so they turn it on explicitly.
+            patch.object(bot_config, "EVA_FAV_ALT_TRIM_TO_DEPTH", True),
         ]
         for p in self._patches:
             p.start()
@@ -202,6 +207,34 @@ class AltWickTests(unittest.TestCase):
         self.assertAlmostEqual(float(sug.entry_cents), 73.5)
         meta = _arm_meta(paper.get_window_arm("eva_wick_xrp", "KXXRP15M-X"))
         self.assertEqual(meta["fill_model"], "unavailable")
+
+    def test_a_fill_can_never_beat_the_quoted_touch(self) -> None:
+        """The regression that took the walk out of production.
+
+        On 2026-09-30 a SOL entry booked at 61c against a quoted 69c ask,
+        because the ladder carried levels below the touch and the walk takes
+        the cheapest first. Those levels are not liquidity we could have hit;
+        a simulated fill that improves on the best offer is always a bug.
+        """
+        with _ladder([(61.0, 500.0), (73.5, 500.0)]):
+            sug = self.xrp.decide(_ctx(73.0))
+        assert sug is not None
+        self.assertAlmostEqual(float(sug.entry_cents), 73.5)
+        self.assertEqual(int(sug.contracts), 16)
+        meta = _arm_meta(paper.get_window_arm("eva_wick_xrp", "KXXRP15M-X"))
+        self.assertGreaterEqual(meta["slippage_vs_touch"], 0)
+
+    def test_production_default_is_to_fill_at_the_ask(self) -> None:
+        """Shipped state: parity with the live book, no ladder consulted."""
+        with patch.object(bot_config, "EVA_FAV_ALT_TRIM_TO_DEPTH", False):
+            with _ladder([(61.0, 500.0)]) as calls:
+                sug = self.xrp.decide(_ctx(73.0))
+        assert sug is not None
+        self.assertAlmostEqual(float(sug.entry_cents), 73.5)
+        self.assertEqual(int(sug.contracts), 16)
+        self.assertEqual(calls, [])
+        meta = _arm_meta(paper.get_window_arm("eva_wick_xrp", "KXXRP15M-X"))
+        self.assertEqual(meta["fill_model"], "off")
 
     def test_the_live_book_never_simulates_a_fill(self) -> None:
         """The hook is identity on eva_wick: BTC/ETH behaviour is untouched."""
