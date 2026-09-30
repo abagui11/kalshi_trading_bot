@@ -783,6 +783,27 @@ def has_open_for_market(
         return row is not None
 
 
+def has_any_for_event(bot_id: str, event_ticker: str) -> bool:
+    """Whether this bot ever held any market of this event, open or closed.
+
+    Market tickers are ``EVENT-STRIKE``, so a prefix match over the event
+    ticker covers every strike. This is how the hourly ladder book enforces
+    "once per hourly event": a settled rung from an earlier fire in the same
+    hour must count, which is why status is not filtered.
+    """
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM paper_positions
+            WHERE bot_id = ? AND market_ticker LIKE ?
+            LIMIT 1
+            """,
+            (bot_id, f"{event_ticker}-%"),
+        ).fetchone()
+    return row is not None
+
+
 def has_pending_order(
     market_ticker: str,
     *,

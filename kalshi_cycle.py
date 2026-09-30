@@ -1152,6 +1152,17 @@ def run_strategy_cycle(
     except Exception:
         logger.exception("process_pending_orders failed")
 
+    # Hourly piggyback books: mirror this tick's eva_wick fires into the
+    # top-of-hour BTC/ETH threshold binaries. Runs after the strategy loop
+    # because it consumes the fires the loop just produced; a no-op unless
+    # the eva_wick_1h_* bots are in ENABLED_BOTS.
+    try:
+        import eva_wick_hourly
+
+        eva_wick_hourly.process_fires(results)
+    except Exception:
+        logger.exception("eva_wick hourly piggyback failed")
+
     return results
 
 

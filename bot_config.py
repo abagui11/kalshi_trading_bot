@@ -14,6 +14,10 @@ SERIES_TO_PRODUCT: dict[str, str] = {
     "KXXRP15M": "XRP",
     "KXSOL15M": "SOL",
     "KXHYPE15M": "HYPE",
+    # Top-of-hour threshold series, traded by the eva_wick hourly piggyback
+    # books only (eva_wick_hourly.py) — never polled by the 15m cycle.
+    "KXBTCD": "BTC",
+    "KXETHD": "ETH",
 }
 PRODUCT_TO_COINBASE: dict[str, str] = {
     "BTC": "BTC-USD",
@@ -33,10 +37,19 @@ ALT_WICK_VARIANTS: dict[str, str] = {
     "eva_wick_hype": "KXHYPE15M",
 }
 
+# Hourly piggyback books (eva_wick_hourly.py): blind fixed-rung baskets on
+# the top-of-hour BTC/ETH threshold series, placed whenever the live
+# eva_wick rule fires. Enabled via ENABLED_BOTS like everything else, but
+# they are not registry strategies — run_strategy_cycle hands them the
+# tick's fires after the strategy loop.
+HOURLY_WICK_BOTS: tuple[str, ...] = ("eva_wick_1h_ladder", "eva_wick_1h_flat")
+
 # Bots that may never send a real order, whatever the env says. This is a
 # code-level guard rather than an env one because KALSHI_LIVE_BOTS is a
 # whitelist that an operator edits under time pressure.
-PAPER_ONLY_BOTS: frozenset[str] = frozenset(ALT_WICK_VARIANTS)
+PAPER_ONLY_BOTS: frozenset[str] = frozenset(ALT_WICK_VARIANTS) | frozenset(
+    HOURLY_WICK_BOTS
+)
 
 # When True, Telegram only gets DMs on real paper trades (not skips).
 # Default False: operator always sees skip rationales (ICT port requirement).
@@ -205,6 +218,8 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "eva_wick_xrp": "EVA favourite · XRP (paper)",
     "eva_wick_sol": "EVA favourite · SOL (paper)",
     "eva_wick_hype": "EVA favourite · HYPE (paper)",
+    "eva_wick_1h_ladder": "EVA 1h ladder · wick piggyback (paper)",
+    "eva_wick_1h_flat": "EVA 1h flat · wick piggyback (paper)",
 }
 
 
