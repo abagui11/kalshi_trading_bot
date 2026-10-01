@@ -1,4 +1,9 @@
-"""eva_wick on the altcoin 15m series — XRP, SOL, HYPE. Paper only.
+"""eva_wick on the altcoin 15m series — XRP, SOL, HYPE.
+
+Paper unless released in ``bot_config.ALT_WICK_LIVE_RELEASED`` AND named in
+KALSHI_LIVE_BOTS (SOL since 2026-10-01). A live clone skips the fill model
+below — it sends the real order — and passes through ``entry_gate``, so the
+daily loss stop applies to it like any live book.
 
 The rule is not re-derived here. These are ``EvaWickStrategy`` with a
 different bot_id and a different series, so the band, the clock, the qualify-
@@ -59,7 +64,9 @@ class EvaWickAltStrategy(EvaWickStrategy):
     def __init__(self, bot_id: str, series: str) -> None:
         self.bot_id = bot_id
         self.asset = bot_config.SERIES_TO_PRODUCT.get(series.upper(), series)
-        self.display_name = f"EVA favourite · {self.asset} (paper)"
+        self.display_name = f"EVA favourite · {self.asset}" + (
+            "" if bot_config.bot_is_live(bot_id) else " (paper)"
+        )
         # Read by the cycle: this book sees its own series and nothing else,
         # so it can never be handed the BTC/ETH market the live book trades.
         self.series_filter: tuple[str, ...] = (series.upper(),)
@@ -85,6 +92,12 @@ class EvaWickAltStrategy(EvaWickStrategy):
         clips in markets where a real order would have filled in full one cent
         higher.
         """
+        if bot_config.bot_is_live(self.bot_id):
+            # A live clone sends the real IOC and the cycle writes the
+            # exchange's fill_count / average price into the ledger, exactly
+            # like the BTC/ETH book. Simulating first would shrink the order
+            # to a modelled fill and cap the limit at a modelled VWAP.
+            return contracts, entry_cents, {"fill_model": "live"}
         limit = float(entry_cents) + float(bot_config.KALSHI_LIVE_TAKE_CENTS)
         meta: dict[str, Any] = {
             "requested_ct": int(contracts),

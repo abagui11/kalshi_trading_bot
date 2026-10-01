@@ -65,8 +65,11 @@ TARGET = {
     "KALSHI_DEPLOY_PCT": "0.06",
     "KALSHI_MAX_DEPLOY_PCT": "0.15",
     "KALSHI_DAILY_STOP_PCT": "0.35",
-    "KALSHI_BOT_MAX_CONTRACTS": "",
-    "KALSHI_LIVE_BOTS": "eva_wick",
+    # SOL clone went live 2026-10-01 at 25 ct; its 25 -> 50 step is decided
+    # by deploy/auto_step_1002.py (the primary path). This manual fallback
+    # keeps SOL where it is rather than wiping the whitelist and cap.
+    "KALSHI_BOT_MAX_CONTRACTS": "eva_wick_sol=25",
+    "KALSHI_LIVE_BOTS": "eva_wick,eva_wick_sol",
 }
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

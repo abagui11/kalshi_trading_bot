@@ -276,7 +276,7 @@ class AltWickTests(unittest.TestCase):
             )
 
     # ---------------------------------------------------------------- safety
-    def test_can_never_route_a_live_order(self) -> None:
+    def test_unreleased_clones_can_never_route_a_live_order(self) -> None:
         """Even explicitly whitelisted as live, and with paper-only off."""
         with patch.object(config, "KALSHI_PAPER_ONLY", False):
             with patch.object(
@@ -285,7 +285,28 @@ class AltWickTests(unittest.TestCase):
             ):
                 self.assertTrue(bot_config.bot_is_live("eva_wick"))
                 for bot_id in bot_config.ALT_WICK_VARIANTS:
+                    if bot_id in bot_config.ALT_WICK_LIVE_RELEASED:
+                        continue
                     self.assertFalse(bot_config.bot_is_live(bot_id))
+
+    def test_released_clone_needs_the_env_whitelist_too(self) -> None:
+        with patch.object(config, "KALSHI_PAPER_ONLY", False):
+            with patch.object(config, "KALSHI_LIVE_BOTS", ("eva_wick",)):
+                self.assertFalse(bot_config.bot_is_live("eva_wick_sol"))
+            with patch.object(
+                config, "KALSHI_LIVE_BOTS", ("eva_wick", "eva_wick_sol")
+            ):
+                self.assertTrue(bot_config.bot_is_live("eva_wick_sol"))
+
+    def test_live_clone_skips_the_fill_model(self) -> None:
+        strat = next(
+            s for s in alt_wick_strategies() if s.bot_id == "eva_wick_sol"
+        )
+        with patch.object(config, "KALSHI_PAPER_ONLY", False), patch.object(
+            config, "KALSHI_LIVE_BOTS", ("eva_wick", "eva_wick_sol")
+        ):
+            ct, px, meta = strat.size_for_fill(None, "YES", 74.0, 25)
+        self.assertEqual((ct, px, meta["fill_model"]), (25, 74.0, "live"))
 
     def test_never_requests_the_claude_htf_refresh(self) -> None:
         for strat in alt_wick_strategies():

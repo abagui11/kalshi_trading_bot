@@ -87,11 +87,18 @@ def book_seed_usd(bot_id: str | None = None) -> float:
         return float(SHADOW_BOOK_SEED_USD)
     return float(KALSHI_BANKROLL_USD)
 
+# Altcoin clones released from the paper-only guard by operator decision.
+# Release is necessary but not sufficient: the bot must ALSO be named in
+# KALSHI_LIVE_BOTS, so the env alone still cannot take a clone live.
+# 2026-10-01: SOL — best clone record (+$107.74 on $225 since 09-30), live
+# at 25 ct via KALSHI_BOT_MAX_CONTRACTS.
+ALT_WICK_LIVE_RELEASED: frozenset[str] = frozenset({"eva_wick_sol"})
+
 # Bots that may never send a real order, whatever the env says. This is a
 # code-level guard rather than an env one because KALSHI_LIVE_BOTS is a
 # whitelist that an operator edits under time pressure.
 PAPER_ONLY_BOTS: frozenset[str] = (
-    frozenset(ALT_WICK_VARIANTS)
+    (frozenset(ALT_WICK_VARIANTS) - ALT_WICK_LIVE_RELEASED)
     | frozenset(HOURLY_WICK_BOTS)
     | frozenset(CROSS_WICK_BOTS)
 )
@@ -261,7 +268,7 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "eva_streak": "EVA reversal",
     "eva_arb": "EVA arb",
     "eva_wick_xrp": "EVA favourite · XRP (paper)",
-    "eva_wick_sol": "EVA favourite · SOL (paper)",
+    "eva_wick_sol": "EVA favourite · SOL",
     "eva_wick_hype": "EVA favourite · HYPE (paper)",
     "eva_wick_1h_ladder": "EVA 1h ladder · wick piggyback (paper)",
     "eva_wick_1h_flat": "EVA 1h flat · wick piggyback (paper)",
