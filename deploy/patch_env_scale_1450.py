@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
 """Bankroll $725 -> $1,450 and 51 -> 100 contracts (staged 2026-10-01, for 2026-10-02).
 
-Operator call, staged the day before: $750 moved from the Coinbase account
-to the Kalshi shard (Coinbase execution went paper-only in the hub repo the
-same day — every remaining live-entry switch off). The explicit plan,
-recorded at staging time: keep trading at 51 ct through 2026-10-01, then
-step to 100 ct on 2026-10-02 **unless the 10-01 session produced evidence
-to pause** — this script is the step, not the decision. Read the evidence
-first; the P&L print below is there for exactly that.
+Operator call, staged the day before: $1,750 moved from the Coinbase
+account to the Kalshi shard, bringing it to ~$2.5K (Coinbase execution
+went paper-only in the hub repo the same day — every remaining live-entry
+switch off). The explicit plan, recorded at staging time: keep trading at
+51 ct through 2026-10-01, then step to 100 ct on 2026-10-02 **unless the
+10-01 session produced evidence to pause** — this script is the step, not
+the decision. Read the evidence first; the P&L print below is there for
+exactly that.
 
 Everything scales by the same ~2x so every ratio the 51-ct record was
 built on is preserved (same discipline as the 09-28-noted, 10-01-shipped
 225 -> 725 step — contracts and bankroll move together or the stop quietly
 changes meaning):
 
-  KALSHI_BANKROLL_USD      725.00 -> 1450.00  (2.00x; shard must hold it)
+  KALSHI_BANKROLL_USD      725.00 -> 1450.00  (2.00x; the shard holds ~$2.53K
+                                               after the deposit — the ~$1.08K
+                                               above the bankroll is deliberate
+                                               cushion, pre-positioned for the
+                                               NEXT step rather than sized into
+                                               this one, because bankroll and
+                                               contracts move together or the
+                                               stop quietly changes meaning)
   KALSHI_MAX_CONTRACTS         51 -> 100      (1.96x — the user-stated target;
                                                bankroll's 2.00x slightly
                                                overshoots it, which errs small)
@@ -34,10 +42,10 @@ $253.75 and never approached. The script re-prints the latest read when
 run so tomorrow's go/no-go uses tomorrow's numbers, not these.
 
 Refuses to run until shard 2 actually covers the new bankroll — applying
-the env before the $750 lands would record an intention as if it were a
+the env before the $1,750 lands would record an intention as if it were a
 fact. Run `deploy/reseed_live_book_1450.py` (with the bot stopped) for the
 ledger-book side of the deposit, and remember the hub-side display seed:
-`dashboard/edge_analytics.py` KALSHI_SEEDS_USD eva_wick 746.75 -> 1496.75.
+`dashboard/edge_analytics.py` KALSHI_SEEDS_USD eva_wick 746.75 -> 2496.75.
 
 Run on the box:  cd /opt/kalshi-15m-bot && ./.venv/bin/python deploy/patch_env_scale_1450.py
 Then:            systemctl restart kalshi-bot
@@ -93,7 +101,7 @@ print(f"shard-{shard} balance: ${shard_usd:,.2f}")
 if shard_usd < SHARD_FLOOR:
     sys.exit(
         f"ABORT: shard-{shard} holds ${shard_usd:,.2f} < ${SHARD_FLOOR:,.2f} — "
-        "the $750 deposit has not landed (or was not shard-transferred). "
+        "the $1,750 deposit has not landed (or was not shard-transferred). "
         "Deposit first, then deploy/shard_transfer.sh, then rerun."
     )
 

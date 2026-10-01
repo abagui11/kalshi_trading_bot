@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Mirror the 2026-10 $750 deposit into the live eva_wick book's ledger.
+"""Mirror the 2026-10 $1,750 deposit into the live eva_wick book's ledger.
 
 Seed change, not a reset — the exact operation `reseed_live_book_725.py`
 ran for the $500 deposit on 2026-10-01: `starting_usd` and `cash_usd`
-both move by +$750.00, so realized P&L, every position row, and the
-ledger invariant ``cash = seed + realized - cost(open)`` are untouched.
+both move by +$1,750.00 (the full deposit, as always — the seed tracks
+capital that arrived on the shard, while the separate bankroll knob at
+$1,450 decides how much of it the sizing may use), so realized P&L, every
+position row, and the ledger invariant
+``cash = seed + realized - cost(open)`` are untouched.
 
 Same standing caveat as that script: the ledger is pre-fee on purpose, so
 book equity runs hot vs the shard by accumulated taker fees. Re-basing
@@ -12,7 +15,7 @@ cash to the account would book that known display gap as a P&L event
 mid-epoch; the seed moves by the deposit and nothing else.
 
 Hub-side display seed moves with it: `dashboard/edge_analytics.py`
-KALSHI_SEEDS_USD eva_wick 746.75 -> 1496.75 (separate hub commit).
+KALSHI_SEEDS_USD eva_wick 746.75 -> 2496.75 (separate hub commit).
 
 Run with kalshi-bot STOPPED (open_trade reads cash then writes it back,
 and the live book holds open positions most windows). Idempotent: refuses
@@ -27,7 +30,7 @@ import sqlite3
 import sys
 
 BOT = "eva_wick"
-DELTA = 750.00
+DELTA = 1750.00
 OLD_SEED = 746.7509
 EPS = 0.01
 
